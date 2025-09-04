@@ -189,16 +189,28 @@ function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
       <div className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <header className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-gray-800 mb-2">VoiceScript Pro</h1>
-            <p className="text-gray-600">Profesyonel Ses Transkripsiyon Aracı</p>
+        <div className="max-w-5xl mx-auto">
+          {/* Modern Header */}
+          <header className="text-center mb-12">
+            <div className="inline-flex items-center gap-3 bg-white/80 backdrop-blur-sm px-6 py-3 rounded-full shadow-lg border border-white/20 mb-6">
+              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full flex items-center justify-center">
+                <Mic className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+                  VoiceScript Pro
+                </h1>
+                <p className="text-sm text-gray-600 font-medium">AI-Powered Voice Transcription</p>
+              </div>
+            </div>
           </header>
 
-          <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-            <nav className="flex border-b border-gray-200">
+          {/* Modern Card Container */}
+          <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
+            {/* Modern Navigation */}
+            <nav className="flex bg-gradient-to-r from-slate-50 to-gray-50 border-b border-gray-200/50">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isDisabled = isRecording && tab.id !== 'record';
@@ -207,18 +219,22 @@ function App() {
                     key={tab.id}
                     onClick={() => !isDisabled && setActiveTab(tab.id)}
                     disabled={isDisabled}
-                    className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 font-medium transition-colors relative ${
+                    className={`flex-1 flex items-center justify-center gap-3 px-8 py-5 font-semibold transition-all duration-300 relative group ${
                       activeTab === tab.id
-                        ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                        ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg'
                         : isDisabled
-                        ? 'text-gray-400 cursor-not-allowed bg-gray-50'
-                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+                        ? 'text-gray-400 cursor-not-allowed bg-gray-50/50'
+                        : 'text-gray-700 hover:text-blue-600 hover:bg-blue-50/50 group-hover:shadow-md'
                     }`}
                   >
-                    <Icon size={20} />
-                    {tab.label}
+                    <Icon size={22} className={`transition-transform duration-300 ${
+                      activeTab === tab.id ? 'scale-110' : 'group-hover:scale-105'
+                    }`} />
+                    <span className="hidden sm:block">{tab.label}</span>
                     {isDisabled && (
-                      <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" title="Kayıt sırasında devre dışı"></div>
+                      <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full animate-pulse shadow-lg" title="Kayıt sırasında devre dışı">
+                        <div className="w-full h-full bg-red-400 rounded-full animate-ping"></div>
+                      </div>
                     )}
                   </button>
                 );

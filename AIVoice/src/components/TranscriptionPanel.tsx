@@ -38,6 +38,9 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   const [editableText, setEditableText] = useState('');
   const [isGeminiTranscribing, setIsGeminiTranscribing] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
   const realtimeTextRef = useRef<HTMLTextAreaElement>(null);
@@ -48,20 +51,32 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     setEditableText(transcript);
   }, [transcript]);
 
-  // Audio playback functions
+  // Audio playback functions with progress tracking
   const playRecordedAudio = () => {
     if (recordedAudio && !isPlayingAudio) {
       const audioUrl = URL.createObjectURL(recordedAudio);
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
-      
+
+      // Set up event listeners for progress tracking
+      audio.onloadedmetadata = () => {
+        setAudioDuration(audio.duration);
+      };
+
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+        setAudioProgress((audio.currentTime / audio.duration) * 100);
+      };
+
       audio.onplay = () => setIsPlayingAudio(true);
       audio.onpause = () => setIsPlayingAudio(false);
       audio.onended = () => {
         setIsPlayingAudio(false);
+        setCurrentTime(0);
+        setAudioProgress(0);
         URL.revokeObjectURL(audioUrl);
       };
-      
+
       audio.play().catch(err => {
         console.error('Audio playback error:', err);
         setIsPlayingAudio(false);
@@ -83,6 +98,30 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     }
   };
 
+  // Seek to specific time in audio
+  const seekAudio = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (audioRef.current && audioDuration > 0) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const percentage = clickX / rect.width;
+      const newTime = percentage * audioDuration;
+
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+      setAudioProgress(percentage * 100);
+    }
+  };
+
+  // Format time display
+  const formatTime = (time: number): string => {
+    if (isNaN(time) || !isFinite(time)) {
+      return '0:00';
+    }
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
   // Gemini API Integration - Audio Transcription
   const transcribeWithGemini = async (audioBlob: Blob) => {
     const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
@@ -97,7 +136,7 @@ B Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Ses dosyası Gemini'ye g�
 
 A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Bu sistem hem anlık transkripsiyon hem de kesin transkripsiyon özelliklerini birlikte sunmaktadır.`;
       
-      onGeminiTranscriptionChange(demoTranscription);
+      setGeminiTranscription(demoTranscription);
       setActiveTab('gemini');
       return;
     }
@@ -503,67 +542,51 @@ ${rawTranscription}`
           Transkripsiyon
         </h2>
         
-        <div className="flex items-center gap-2">
-          {/* Audio Playback Button */}
-          {recordedAudio && !isRecording && (
-            <button
-              onClick={toggleAudioPlayback}
-              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors"
-            >
-              {isPlayingAudio ? (
-                <>
-                  <Pause className="w-4 h-4" />
-                  Duraklat
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  Sesi Dinle
-                </>
-              )}
-            </button>
-          )}
-          
-          {/* Gemini Audio Transcription Button */}
+        <div className="flex items-center gap-3">
+          {/* Modern Gemini Button - Compact Design */}
           {recordedAudio && !isRecording && (
             <button
               onClick={() => transcribeWithGemini(recordedAudio)}
               disabled={isGeminiTranscribing}
-              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white px-3 py-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
             >
               {isGeminiTranscribing ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              {isGeminiTranscribing ? 'Gemini Transkribe Ediyor...' : '🎤 Gemini ile Transkribe Et'}
+              <span className="text-sm font-medium">
+                {isGeminiTranscribing ? 'İşleniyor...' : 'Gemini'}
+              </span>
             </button>
           )}
-          
+
           {/* AI Text Improvement Button */}
           {(transcript || geminiTranscription) && !isRecording && (
             <button
               onClick={() => improveWithAI(geminiTranscription || transcript, improvementType)}
               disabled={isImproving}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-3 py-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
             >
               {isImproving ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              {isImproving ? 'İyileştiriliyor...' : '🤖 AI ile İyileştir'}
+              <span className="text-sm font-medium">
+                {isImproving ? 'İyileştiriliyor...' : 'AI'}
+              </span>
             </button>
           )}
-          
+
           <select
             value={improvementType}
             onChange={(e) => setImprovementType(e.target.value as 'fast' | 'detailed' | 'summary')}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white shadow-sm"
           >
-            <option value="fast">Hızlı Düzeltme</option>
-            <option value="detailed">Detaylı İyileştirme</option>
-            <option value="summary">Özet Çıkar</option>
+            <option value="fast">Hızlı</option>
+            <option value="detailed">Detaylı</option>
+            <option value="summary">Özet</option>
           </select>
         </div>
       </div>
@@ -627,6 +650,60 @@ ${rawTranscription}`
 
       {/* Content */}
       <div className="p-6">
+        {/* Modern Audio Player - Better Positioned */}
+        {recordedAudio && !isRecording && (
+          <div className="mb-6 p-4 bg-gradient-to-r from-slate-50 to-gray-50 rounded-xl border border-gray-200">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <Volume2 className="w-4 h-4 text-green-600" />
+                Ses Kaydı Oynatıcı
+              </h3>
+              <span className="text-xs text-gray-500">
+                {(recordedAudio.size / 1024).toFixed(1)} KB
+              </span>
+            </div>
+
+            <div className="flex items-center gap-4">
+              {/* Play/Pause Button */}
+              <button
+                onClick={toggleAudioPlayback}
+                className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-full transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
+              >
+                {isPlayingAudio ? (
+                  <Pause className="w-6 h-6" />
+                ) : (
+                  <Play className="w-6 h-6 ml-0.5" />
+                )}
+              </button>
+
+              {/* Progress Bar */}
+              <div className="flex items-center gap-3 flex-1">
+                <span className="text-sm font-medium text-gray-700 min-w-[40px]">
+                  {formatTime(currentTime)}
+                </span>
+
+                <div
+                  className="flex-1 h-3 bg-gray-200 rounded-full cursor-pointer relative overflow-hidden"
+                  onClick={seekAudio}
+                >
+                  <div
+                    className="h-full bg-gradient-to-r from-green-500 to-emerald-600 rounded-full transition-all duration-300"
+                    style={{ width: `${audioProgress}%` }}
+                  ></div>
+                  <div
+                    className="absolute top-1/2 transform -translate-y-1/2 w-5 h-5 bg-white border-2 border-green-500 rounded-full shadow-md transition-all duration-300"
+                    style={{ left: `calc(${audioProgress}% - 10px)` }}
+                  ></div>
+                </div>
+
+                <span className="text-sm font-medium text-gray-700 min-w-[40px]">
+                  {formatTime(audioDuration)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'realtime' && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
@@ -702,7 +779,7 @@ ${rawTranscription}`
             <textarea
               ref={geminiTextRef}
               value={geminiTranscription}
-              onChange={(e) => onGeminiTranscriptionChange(e.target.value)}
+              onChange={(e) => setGeminiTranscription(e.target.value)}
               placeholder="Gemini ile transkripsiyon yapmak için 'Gemini ile Transkribe Et' butonuna basın"
               className="w-full h-96 p-4 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm leading-relaxed bg-purple-50"
               style={{ whiteSpace: 'pre-wrap' }}
