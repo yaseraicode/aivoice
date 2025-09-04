@@ -5,7 +5,7 @@ import jsPDF from 'jspdf';
 
 interface PDFExportProps {
   transcript: string;
-  aiImprovementData?: AIImprovement | null;
+  aiImprovementData: AIImprovement | null;
   recordingInfo?: {
     duration: number;
     quality: string;
@@ -80,19 +80,28 @@ const PDFExport: React.FC<PDFExportProps> = ({
       .trim();
   };
 
-  const generatePDF = (type: 'raw' | 'ai' | 'comparison') => {
+  const generatePDF = async (type: 'raw' | 'ai' | 'comparison') => {
     try {
+      console.log('PDF oluşturma başlatıldı:', type);
+
+      // jsPDF kontrolü
+      if (!jsPDF) {
+        throw new Error('jsPDF kütüphanesi yüklenemedi');
+      }
+
       const doc = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
         compress: true
       });
-      
+
+      console.log('jsPDF instance oluşturuldu');
+
       // Font ayarları - Türkçe karakter desteği için
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      
+
       // PDF metadata
       doc.setProperties({
         title: `VoiceScript Pro - ${type === 'raw' ? 'Ham Transkripsiyon' : type === 'ai' ? 'AI Iyilestirilmis' : 'Karsilastirmali'}`,
@@ -100,17 +109,17 @@ const PDFExport: React.FC<PDFExportProps> = ({
         author: 'VoiceScript Pro',
         creator: 'VoiceScript Pro v1.0'
       });
-      
+
       // Sayfa ayarları
       const pageWidth = doc.internal.pageSize.width;
       const pageHeight = doc.internal.pageSize.height;
       const margin = 20;
       const maxWidth = pageWidth - (margin * 2);
-      
+
       // Başlık
       doc.setFontSize(16);
       doc.setTextColor(0, 0, 0);
-      
+
       let title = "";
       switch (type) {
         case 'raw':
@@ -123,30 +132,30 @@ const PDFExport: React.FC<PDFExportProps> = ({
           title = "SES KAYDI - KARSILASTIRMALI GORUNUM";
           break;
       }
-      
+
       // Başlığı ortala
       const titleWidth = doc.getTextWidth(title);
       const titleX = (pageWidth - titleWidth) / 2;
       doc.text(title, titleX, 25);
-      
+
       // Kayıt bilgileri
       if (recordingInfo) {
         doc.setFontSize(9);
         doc.setTextColor(100, 100, 100);
-        
+
         const formatDuration = (seconds: number) => {
           const mins = Math.floor(seconds / 60);
           const secs = seconds % 60;
           return `${mins}:${secs.toString().padStart(2, '0')}`;
         };
-        
+
         const info = [
           `Kayit Tarihi: ${recordingInfo.startTime.toLocaleDateString('tr-TR')} ${recordingInfo.startTime.toLocaleTimeString('tr-TR')}`,
           `Sure: ${formatDuration(recordingInfo.duration)}`,
           `Kalite: ${recordingInfo.quality}`,
           `Olusturulma: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`
         ];
-        
+
         let yPos = 35;
         info.forEach(line => {
           // Türkçe karakterleri ASCII'ye çevir
@@ -157,6 +166,19 @@ const PDFExport: React.FC<PDFExportProps> = ({
       }
 
       let currentY = recordingInfo ? 60 : 40;
+
+      // İçerik kontrolü
+      if (!transcript && type === 'raw') {
+        throw new Error('Transkripsiyon metni bulunamadı');
+      }
+
+      if (type === 'ai' && !aiImprovementData) {
+        throw new Error('AI iyileştirme verisi bulunamadı');
+      }
+
+      if (type === 'comparison' && !aiImprovementData) {
+        throw new Error('Karşılaştırma için AI iyileştirme verisi gerekli');
+      }
 
       // İçerik oluştur
       if (type === 'raw') {
@@ -169,10 +191,24 @@ const PDFExport: React.FC<PDFExportProps> = ({
         generateComparisonPDF(doc, transcript, aiImprovementData, currentY, margin, maxWidth);
         doc.save(`voicescript-karsilastirmali-${Date.now()}.pdf`);
       }
-      
+
+      console.log('PDF başarıyla oluşturuldu');
+
     } catch (error) {
       console.error('PDF olusturma hatasi:', error);
-      alert(`PDF olusturulamadi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+
+      // Kullanıcı dostu hata mesajı
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      alert(`PDF oluşturulamadı: ${errorMessage}\n\nLütfen sayfayı yenileyip tekrar deneyin.`);
+
+      // Hata detaylarını console'a yaz
+      if (error instanceof Error) {
+        console.error('Hata detayı:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+      }
     }
   };
 
@@ -372,7 +408,7 @@ const PDFExport: React.FC<PDFExportProps> = ({
         </div>
       )}
 
-      {transcript && !aiImprovement && (
+      {transcript && !aiImprovementData && (
         <div className="mt-6 p-4 bg-blue-50 rounded-lg">
           <p className="text-blue-800 text-center text-sm">
             💡 AI iyileştirme yaparak daha fazla PDF seçeneğine erişin

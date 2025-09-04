@@ -264,10 +264,16 @@ function App() {
               {activeTab === 'record' && (
                 <AudioRecorder
                   onRecordingComplete={handleRecordingComplete}
+                  transcript={transcript}
+                  setTranscript={setTranscript}
                   isRecording={isRecording}
                   setIsRecording={setIsRecording}
+                  recordingTime={recordingTime}
+                  setRecordingTime={setRecordingTime}
                   realtimeText={realtimeText}
                   setRealtimeText={setRealtimeText}
+                  geminiTranscription={geminiTranscription}
+                  setGeminiTranscription={setGeminiTranscription}
                 />
               )}
 
@@ -297,6 +303,11 @@ function App() {
                 <PDFExport
                   transcript={transcript}
                   aiImprovementData={aiImprovement}
+                  recordingInfo={{
+                    duration: recordingTime,
+                    quality: 'medium',
+                    startTime: new Date()
+                  }}
                 />
               )}
             </main>
