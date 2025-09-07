@@ -147,6 +147,9 @@ Sistem: Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli 
 
     const GEMINI_API_KEY = currentKey.key;
 
+    // Log which key is being used
+    console.log(`🔑 Using Gemini API key: ${currentKey.name} (ID: ${currentKey.id})`);
+
     try {
       setIsGeminiTranscribing(true);
       
@@ -218,7 +221,13 @@ Başlıkları 📋 BAŞLIK: formatında göster. Noktalama işaretlerini ekle ve
 
       setGeminiTranscription(transcribedText);
       setActiveTab('gemini');
-      
+
+      // Mark key as used and rotate to next key for round-robin
+      keyManager.markKeyAsUsed(currentKey.id);
+      keyManager.rotateKey();
+
+      console.log(`✅ Successfully used key: ${currentKey.name}, rotated to next key`);
+
       // Gemini transkripsiyon tamamlandığında kaydet
       if (onSaveRecording) {
         setTimeout(() => {
@@ -290,6 +299,9 @@ Sistem: Ses dosyası boyutu ${(audioBlob.size / 1024).toFixed(2)} KB, format: ${
     }
 
     const GEMINI_API_KEY = currentKey.key;
+
+    // Log which key is being used for AI improvement
+    console.log(`🔑 Using Gemini API key for AI improvement: ${currentKey.name} (ID: ${currentKey.id})`);
 
     const prompts = {
       fast: `Bu Türkçe transkripsiyon metnini düzgün paragraflar halinde düzenle ve bariz yazım hatalarını düzelt. Noktalama işaretlerini ekle. Orijinal anlamı koru:
@@ -392,8 +404,12 @@ ${rawTranscription}`
 
       setAiImprovement(improvement);
       setActiveTab('ai');
-      
-      console.log('AI Improvement completed successfully');
+
+      // Mark key as used and rotate to next key for round-robin
+      keyManager.markKeyAsUsed(currentKey.id);
+      keyManager.rotateKey();
+
+      console.log(`✅ Successfully used key for AI improvement: ${currentKey.name}, rotated to next key`);
       
     } catch (error) {
       console.error('AI iyileştirme hatası:', error);
