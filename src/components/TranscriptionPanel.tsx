@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Sparkles, GitCompare, Copy, Download, RefreshCw, Play, Pause, Volume2 } from 'lucide-react';
+import { GeminiKeyManager } from '../services/GeminiKeyManager';
 
 export interface AIImprovement {
   original: string;
@@ -122,24 +123,29 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Gemini API Integration - Audio Transcription
-  const transcribeWithGemini = async (audioBlob: Blob) => {
-    const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-    
-    if (!GEMINI_API_KEY) {
-      console.warn('Gemini API key not found, using demo transcription');
+  // Gemini API Integration - Audio Transcription with Key Rotation
+  const transcribeWithGemini = async (audioBlob: Blob, retryCount = 0) => {
+    const keyManager = GeminiKeyManager.getInstance();
+    const currentKey = keyManager.getCurrentKey();
+
+    if (!currentKey) {
+      console.warn('No valid Gemini API keys found, using demo transcription');
       const demoTranscription = `📋 BAŞLIK: Gemini Ses Transkripsiyon Demo
 
-A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Bu bir Gemini API ile ses transkripsiyon demo metnidir. Gerçek API anahtarı eklendiğinde bu metin yerine gerçek çeviri sonucu görünecektir.
+A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Bu bir Gemini API ile ses transkripsiyon demo metnidir. Ayarlar sayfasından API anahtarı ekleyerek gerçek transkripsiyon özelliğini kullanabilirsiniz.
 
-B Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Ses dosyası Gemini'ye gönderildi ve konuşmacı ayrımı ile birlikte transkribe edildi. Dosya boyutu: ${(audioBlob.size / 1024).toFixed(2)} KB.
+B Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Ses dosyası boyutu: ${(audioBlob.size / 1024).toFixed(2)} KB. Demo modunda çalışılıyor.
 
-A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Bu sistem hem anlık transkripsiyon hem de kesin transkripsiyon özelliklerini birlikte sunmaktadır.`;
-      
+📋 BAŞLIK: Kurulum Gerekli
+
+Sistem: Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli bir API anahtarı ekleyin.`;
+
       setGeminiTranscription(demoTranscription);
       setActiveTab('gemini');
       return;
     }
+
+    const GEMINI_API_KEY = currentKey.key;
 
     try {
       setIsGeminiTranscribing(true);
@@ -147,7 +153,7 @@ A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Bu sistem hem anlık tran
       // Convert audio blob to base64
       const base64Audio = await blobToBase64(audioBlob);
       
-      const model = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.0-flash-exp';
+      const model = 'gemini-2.0-flash-exp'; // Default model
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
       
       console.log('Gemini Audio Transcription Request:', {
@@ -263,26 +269,27 @@ Sistem: Ses dosyası boyutu ${(audioBlob.size / 1024).toFixed(2)} KB, format: ${
     });
   };
 
-  // Gemini API Integration - Text Improvement Only
-  const improveWithAI = async (rawTranscription: string, type: 'fast' | 'detailed' | 'summary') => {
-    const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-    
-    console.log('Gemini API Key check:', GEMINI_API_KEY ? 'Found' : 'Not found');
-    
-    if (!GEMINI_API_KEY) {
-      console.warn('Gemini API key not found in environment variables, using demo improvement');
+  // Gemini API Integration - Text Improvement with Key Rotation
+  const improveWithAI = async (rawTranscription: string, type: 'fast' | 'detailed' | 'summary', retryCount = 0) => {
+    const keyManager = GeminiKeyManager.getInstance();
+    const currentKey = keyManager.getCurrentKey();
+
+    if (!currentKey) {
+      console.warn('No valid Gemini API keys found, using demo improvement');
       const demoImprovement = simulateAIImprovement(rawTranscription, type);
       const improvement: AIImprovement = {
         original: rawTranscription,
         improved: demoImprovement,
         improvementType: type,
         timestamp: new Date(),
-        error: 'VITE_GEMINI_API_KEY environment variable bulunamadı. Lütfen .env dosyasını kontrol edin.'
+        error: 'Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli bir API anahtarı ekleyin.'
       };
       setAiImprovement(improvement);
       setActiveTab('ai');
       return;
     }
+
+    const GEMINI_API_KEY = currentKey.key;
 
     const prompts = {
       fast: `Bu Türkçe transkripsiyon metnini düzgün paragraflar halinde düzenle ve bariz yazım hatalarını düzelt. Noktalama işaretlerini ekle. Orijinal anlamı koru:
@@ -309,7 +316,7 @@ ${rawTranscription}`
     try {
       setIsImproving(true);
       
-      const model = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.0-flash-exp';
+      const model = 'gemini-2.0-flash-exp'; // Default model
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
       
       console.log('Gemini API Request:', {

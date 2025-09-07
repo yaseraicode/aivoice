@@ -4,7 +4,8 @@ import AudioRecorder from './components/AudioRecorder';
 import TranscriptionPanel from './components/TranscriptionPanel';
 import RecordingHistory from './components/RecordingHistory';
 import PDFExport from './components/PDFExport';
-import { Mic, FileText, History, Download } from 'lucide-react';
+import SettingsPage from './components/SettingsPage';
+import { Mic, FileText, History, Download, Settings } from 'lucide-react';
 
 function App() {
   const [activeTab, setActiveTab] = useState('record');
@@ -17,7 +18,7 @@ function App() {
   const [realtimeText, setRealtimeText] = useState('');
   const [geminiTranscription, setGeminiTranscription] = useState('');
   const [aiImprovement, setAiImprovement] = useState<AIImprovement | null>(null);
-  const [recordings, setRecordings] = useState<unknown[]>(() => {
+  const [recordings, setRecordings] = useState<any[]>(() => {
     const saved = localStorage.getItem('voicescript-recordings');
     return saved ? JSON.parse(saved) : [];
   });
@@ -185,7 +186,8 @@ function App() {
     { id: 'record', label: 'Kayıt', icon: Mic },
     { id: 'transcription', label: 'Transkripsiyon', icon: FileText },
     { id: 'history', label: 'Kayıt Geçmişi', icon: History },
-    { id: 'export', label: 'PDF Dışa Aktar', icon: Download }
+    { id: 'export', label: 'PDF Dışa Aktar', icon: Download },
+    { id: 'settings', label: 'Ayarlar', icon: Settings }
   ];
 
   return (
@@ -296,6 +298,7 @@ function App() {
               {activeTab === 'transcription' && (
                 <TranscriptionPanel
                   transcript={transcript}
+                  setTranscript={setTranscript}
                   aiImprovement={aiImprovement}
                   setAiImprovement={setAiImprovement}
                   geminiTranscription={geminiTranscription}
@@ -325,6 +328,10 @@ function App() {
                     startTime: new Date()
                   }}
                 />
+              )}
+
+              {activeTab === 'settings' && (
+                <SettingsPage />
               )}
             </main>
           </div>
