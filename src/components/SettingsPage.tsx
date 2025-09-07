@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info } from 'lucide-react';
+import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info, Save, RotateCcw } from 'lucide-react';
 import { GeminiKeyManager, GeminiKey } from '../services/GeminiKeyManager';
 
 const SettingsPage: React.FC = () => {
   const [keys, setKeys] = useState<GeminiKey[]>([]);
   const [isAddingKey, setIsAddingKey] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', apiKey: '' });
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyValue, setNewKeyValue] = useState('');
   const [showKeyValue, setShowKeyValue] = useState<string | null>(null);
-  const [testingKey, setTestingKey] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; error?: string }>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   const [keyManager] = useState(() => GeminiKeyManager.getInstance());
 
   useEffect(() => {
@@ -21,15 +22,26 @@ const SettingsPage: React.FC = () => {
     setKeys(keyManager.getAllKeys());
   };
 
+  const showNotification = (type: 'success' | 'error' | 'warning', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 5000);
+  };
+
   const handleAddKey = () => {
     if (!newKeyName.trim() || !newKeyValue.trim()) {
-      alert('Lütfen anahtar adı ve değerini girin.');
+      showNotification('error', 'Lütfen anahtar adı ve değerini girin.');
       return;
     }
 
-    // Basic validation for Gemini API key format
-    if (!newKeyValue.startsWith('AIza')) {
-      alert('Geçersiz Gemini API anahtarı formatı. Anahtar "AIza" ile başlamalıdır.');
+    if (newKeyValue.trim().length < 5) {
+      showNotification('error', 'API anahtarı en az 5 karakter olmalıdır.');
+      return;
+    }
+
+    // Check for duplicate keys
+    const existingKey = keys.find(key => key.key === newKeyValue.trim());
+    if (existingKey) {
+      showNotification('warning', 'Bu API anahtarı zaten mevcut.');
       return;
     }
 
@@ -38,59 +50,68 @@ const SettingsPage: React.FC = () => {
     setNewKeyValue('');
     setIsAddingKey(false);
     loadKeys();
+    showNotification('success', 'API anahtarı başarıyla eklendi.');
   };
 
   const handleDeleteKey = (id: string) => {
     if (window.confirm('Bu anahtarı silmek istediğinizden emin misiniz?')) {
       keyManager.deleteKey(id);
       loadKeys();
+      showNotification('success', 'API anahtarı silindi.');
     }
   };
 
   const handleToggleKeyStatus = (id: string, isActive: boolean) => {
     keyManager.updateKey(id, { isActive: !isActive });
     loadKeys();
+    showNotification('success', `API anahtarı ${!isActive ? 'aktif' : 'pasif'} duruma getirildi.`);
   };
 
-  const handleEditKey = (id: string, name: string, key: string) => {
-    setEditingKey(id);
-    setNewKeyName(name);
-    setNewKeyValue(key);
+  const handleEditKey = (key: GeminiKey) => {
+    setEditingKey(key.id);
+    setEditForm({ name: key.name, apiKey: key.key });
   };
 
-  const handleSaveEdit = () => {
-    if (editingKey && newKeyName.trim() && newKeyValue.trim()) {
-      keyManager.updateKey(editingKey, {
-        name: newKeyName,
-        key: newKeyValue
-      });
-      setEditingKey(null);
-      setNewKeyName('');
-      setNewKeyValue('');
-      loadKeys();
+  const handleSaveEdit = async () => {
+    if (!editingKey) return;
+
+    setIsLoading(true);
+    try {
+      const result = keyManager.editKey(editingKey, editForm.name, editForm.apiKey);
+
+      if (result.success) {
+        setEditingKey(null);
+        setEditForm({ name: '', apiKey: '' });
+        loadKeys();
+        showNotification('success', 'API anahtarı başarıyla güncellendi.');
+      } else {
+        showNotification('error', result.error || 'Düzenleme sırasında hata oluştu.');
+      }
+    } catch (error) {
+      showNotification('error', 'Düzenleme sırasında beklenmeyen hata oluştu.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCancelEdit = () => {
     setEditingKey(null);
-    setNewKeyName('');
-    setNewKeyValue('');
+    setEditForm({ name: '', apiKey: '' });
   };
 
-  const handleTestKey = async (keyId: string, apiKey: string) => {
-    setTestingKey(keyId);
-    setTestResults(prev => ({ ...prev, [keyId]: { success: false } }));
-
+  const handleTestKey = async (keyId: string) => {
     try {
-      const result = await keyManager.testKey(apiKey);
-      setTestResults(prev => ({ ...prev, [keyId]: result }));
+      const result = await keyManager.testGeminiKey(keyId);
+
+      if (result.success) {
+        showNotification('success', 'API anahtarı test edildi - Çalışıyor ✅');
+      } else {
+        showNotification('error', `API anahtarı test edildi - Hatalı: ${result.error}`);
+      }
+
+      loadKeys(); // Refresh to show updated status
     } catch (error) {
-      setTestResults(prev => ({
-        ...prev,
-        [keyId]: { success: false, error: 'Test sırasında hata oluştu' }
-      }));
-    } finally {
-      setTestingKey(null);
+      showNotification('error', 'Test sırasında beklenmeyen hata oluştu.');
     }
   };
 
@@ -98,13 +119,13 @@ const SettingsPage: React.FC = () => {
     setShowKeyValue(showKeyValue === keyId ? null : keyId);
   };
 
-  const maskKey = (key: string): string => {
+  const maskApiKey = (key: string): string => {
     if (key.length <= 8) return key;
     return `${key.substring(0, 8)}${'*'.repeat(key.length - 8)}`;
   };
 
   const formatDate = (dateString: string): string => {
-    if (!dateString) return 'Hiç kullanılmadı';
+    if (!dateString) return 'Hiç test edilmedi';
     return new Date(dateString).toLocaleString('tr-TR');
   };
 
@@ -220,6 +241,96 @@ const SettingsPage: React.FC = () => {
           </div>
         )}
 
+        {/* Notification */}
+        {notification && (
+          <div className={`mb-6 p-4 rounded-lg border ${
+            notification.type === 'success'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : notification.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+          }`}>
+            <div className="flex items-center gap-2">
+              {notification.type === 'success' && <Check className="w-5 h-5" />}
+              {notification.type === 'error' && <X className="w-5 h-5" />}
+              {notification.type === 'warning' && <AlertTriangle className="w-5 h-5" />}
+              <span>{notification.message}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Modal */}
+        {editingKey && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+              <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                <Edit3 className="w-5 h-5" />
+                API Anahtarı Düzenle
+              </h2>
+
+              <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Anahtar Adı:
+                    </label>
+                    <input
+                      type="text"
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                      placeholder="Örn: Ana Key, Yedek Key 1"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      required
+                      minLength={3}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      API Anahtarı:
+                    </label>
+                    <input
+                      type="text"
+                      value={editForm.apiKey}
+                      onChange={(e) => setEditForm({...editForm, apiKey: e.target.value})}
+                      placeholder="API anahtarı..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                      required
+                      minLength={5}
+                    />
+                    <small className="text-gray-500 text-xs mt-1 block">
+                      API anahtarı en az 5 karakter olmalıdır
+                    </small>
+                  </div>
+
+                  <div className="flex gap-2 pt-4">
+                    <button
+                      type="button"
+                      onClick={handleCancelEdit}
+                      className="flex-1 flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                      İptal
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {isLoading ? (
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      {isLoading ? 'Kaydediliyor...' : 'Kaydet'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Keys List */}
         <div className="space-y-4">
           {keys.length === 0 ? (
@@ -232,61 +343,55 @@ const SettingsPage: React.FC = () => {
             </div>
           ) : (
             keys.map((key) => (
-              <div
-                key={key.id}
-                className={`border rounded-lg p-4 transition-all duration-300 ${
-                  key.isActive
-                    ? 'border-green-200 bg-green-50'
-                    : 'border-red-200 bg-red-50'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3">
+              <div key={key.id} className={`key-item border rounded-lg p-4 shadow-sm ${
+                key.isActive ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+              }`}>
+                <div className="key-info flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
-                    <div className={`w-3 h-3 rounded-full ${
-                      key.isActive ? 'bg-green-500' : 'bg-red-500'
-                    }`}></div>
+                    <span className={`status text-lg ${
+                      key.isActive ? '🟢' : '🔴'
+                    }`}>
+                      {key.isActive ? 'Aktif' : 'Pasif'}
+                    </span>
                     <h3 className="text-lg font-semibold text-gray-800">{key.name}</h3>
-                    {key.failedAttempts > 0 && (
+                    {key.failureCount > 0 && (
                       <div className="flex items-center gap-1 text-yellow-600">
                         <AlertTriangle className="w-4 h-4" />
-                        <span className="text-sm">Hata: {key.failedAttempts}</span>
+                        <span className="text-sm">Hata: {key.failureCount}</span>
                       </div>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="key-actions flex items-center gap-2">
                     <button
-                      onClick={() => handleTestKey(key.id, key.key)}
-                      disabled={testingKey === key.id}
+                      onClick={() => handleTestKey(key.id)}
+                      disabled={key.testStatus === 'testing'}
                       className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm transition-colors disabled:opacity-50"
                     >
-                      {testingKey === key.id ? (
+                      {key.testStatus === 'testing' ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       ) : (
                         <TestTube className="w-4 h-4" />
                       )}
-                      Test
+                      {key.testStatus === 'testing' ? 'Test ediliyor...' : 'Test Et'}
                     </button>
-
                     <button
                       onClick={() => handleToggleKeyStatus(key.id, key.isActive)}
                       className={`flex items-center gap-2 px-3 py-1 rounded-lg text-sm transition-colors ${
                         key.isActive
-                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          ? 'bg-orange-600 hover:bg-orange-700 text-white'
                           : 'bg-green-600 hover:bg-green-700 text-white'
                       }`}
                     >
-                      {key.isActive ? 'Devre Dışı' : 'Aktif Et'}
+                      {key.isActive ? 'Pasife Çek' : 'Aktife Çek'}
                     </button>
-
                     <button
-                      onClick={() => handleEditKey(key.id, key.name, key.key)}
+                      onClick={() => handleEditKey(key)}
                       className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
                     >
                       <Edit3 className="w-4 h-4" />
                       Düzenle
                     </button>
-
                     <button
                       onClick={() => handleDeleteKey(key.id)}
                       className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
@@ -296,27 +401,6 @@ const SettingsPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-
-                {/* Test Results */}
-                {testResults[key.id] && (
-                  <div className={`mb-3 p-3 rounded-lg text-sm ${
-                    testResults[key.id].success
-                      ? 'bg-green-100 border border-green-200 text-green-800'
-                      : 'bg-red-100 border border-red-200 text-red-800'
-                  }`}>
-                    {testResults[key.id].success ? (
-                      <div className="flex items-center gap-2">
-                        <Check className="w-4 h-4" />
-                        <span>Anahtar çalışıyor ✅</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <X className="w-4 h-4" />
-                        <span>Hata: {testResults[key.id].error}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* Key Value */}
                 <div className="mb-3">
@@ -333,10 +417,17 @@ const SettingsPage: React.FC = () => {
                       )}
                     </button>
                   </div>
-                  <div className="font-mono text-sm bg-white border border-gray-300 rounded px-3 py-2 mt-1">
-                    {showKeyValue === key.id ? key.key : maskKey(key.key)}
+                  <div className="font-mono text-sm bg-gray-50 border border-gray-300 rounded px-3 py-2 mt-1">
+                    {showKeyValue === key.id ? key.key : maskApiKey(key.key)}
                   </div>
                 </div>
+
+                {/* Test Result */}
+                {key.testResult === 'failed' && key.errorMessage && (
+                  <div className="error-message mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
+                    ❌ Hata: {key.errorMessage}
+                  </div>
+                )}
 
                 {/* Key Info */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
@@ -346,22 +437,20 @@ const SettingsPage: React.FC = () => {
                     {new Date(key.createdAt).toLocaleDateString('tr-TR')}
                   </div>
                   <div>
-                    <span className="font-medium">Son Kullanım:</span>
+                    <span className="font-medium">Güncellenme:</span>
                     <br />
-                    {formatDate(key.lastUsed)}
+                    {new Date(key.updatedAt).toLocaleDateString('tr-TR')}
+                  </div>
+                  <div>
+                    <span className="font-medium">Son Test:</span>
+                    <br />
+                    {formatDate(key.lastTested)}
                   </div>
                   <div>
                     <span className="font-medium">Hata Sayısı:</span>
                     <br />
-                    {key.failedAttempts}
+                    {key.failureCount}
                   </div>
-                  {key.lastFailedAt && (
-                    <div>
-                      <span className="font-medium">Son Hata:</span>
-                      <br />
-                      {formatDate(key.lastFailedAt)}
-                    </div>
-                  )}
                 </div>
               </div>
             ))

@@ -4,9 +4,13 @@ export interface GeminiKey {
   key: string; // encrypted
   isActive: boolean;
   createdAt: string;
+  updatedAt: string;
   lastUsed: string;
-  failedAttempts: number;
-  lastFailedAt?: string;
+  lastTested: string;
+  testResult: 'success' | 'failed' | 'never';
+  testStatus: 'idle' | 'testing' | 'success' | 'failed';
+  errorMessage: string | null;
+  failureCount: number;
 }
 
 export interface KeyStorage {
@@ -98,8 +102,13 @@ export class GeminiKeyManager {
       key: apiKey.trim(),
       isActive: true,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       lastUsed: '',
-      failedAttempts: 0
+      lastTested: '',
+      testResult: 'never',
+      testStatus: 'idle',
+      errorMessage: null,
+      failureCount: 0
     };
 
     this.keys.push(newKey);
@@ -143,7 +152,7 @@ export class GeminiKeyManager {
     const key = this.keys.find(k => k.id === keyId);
     if (key) {
       key.lastUsed = new Date().toISOString();
-      key.failedAttempts = 0; // Reset failed attempts on success
+      key.failureCount = 0; // Reset failure count on success
       this.saveKeys();
     }
   }
@@ -152,11 +161,10 @@ export class GeminiKeyManager {
   markKeyAsFailed(keyId: string): void {
     const key = this.keys.find(k => k.id === keyId);
     if (key) {
-      key.failedAttempts += 1;
-      key.lastFailedAt = new Date().toISOString();
+      key.failureCount += 1;
 
       // Disable key if too many failures
-      if (key.failedAttempts >= 3) {
+      if (key.failureCount >= 3) {
         key.isActive = false;
       }
 
@@ -183,19 +191,223 @@ export class GeminiKeyManager {
     return this.keys.some(key => key.isActive);
   }
 
-  // Test a key
-  async testKey(key: string): Promise<{ success: boolean; error?: string }> {
+  // Edit a key with validation
+  editKey(id: string, name: string, apiKey: string): { success: boolean; error?: string } {
+    // Validation
+    if (!name.trim()) {
+      return { success: false, error: 'Anahtar adı boş olamaz' };
+    }
+
+    if (name.trim().length < 3) {
+      return { success: false, error: 'Anahtar adı en az 3 karakter olmalıdır' };
+    }
+
+    if (!apiKey.trim()) {
+      return { success: false, error: 'API anahtarı boş olamaz' };
+    }
+
+    if (apiKey.trim().length < 5) {
+      return { success: false, error: 'API anahtarı en az 5 karakter olmalıdır' };
+    }
+
+    // Check for duplicate keys (excluding current key)
+    const existingKey = this.keys.find(key =>
+      key.key === apiKey.trim() && key.id !== id
+    );
+    if (existingKey) {
+      return { success: false, error: 'Bu API anahtarı zaten mevcut' };
+    }
+
+    // Update the key
+    const index = this.keys.findIndex(key => key.id === id);
+    if (index === -1) {
+      return { success: false, error: 'Anahtar bulunamadı' };
+    }
+
+    this.keys[index] = {
+      ...this.keys[index],
+      name: name.trim(),
+      key: apiKey.trim(),
+      updatedAt: new Date().toISOString(),
+      testResult: 'never', // Reset test status after edit
+      testStatus: 'idle',
+      errorMessage: null
+    };
+
+    this.saveKeys();
+    return { success: true };
+  }
+
+  // Get key by ID
+  getKeyById(id: string): GeminiKey | null {
+    return this.keys.find(key => key.id === id) || null;
+  }
+
+  // Set test status for a key
+  setKeyTestStatus(id: string, status: 'idle' | 'testing' | 'success' | 'failed'): void {
+    const key = this.keys.find(k => k.id === id);
+    if (key) {
+      key.testStatus = status;
+      this.saveKeys();
+    }
+  }
+
+  // Update key status after test
+  updateKeyStatus(id: string, updates: Partial<Pick<GeminiKey, 'isActive' | 'lastTested' | 'testResult' | 'errorMessage'>>): void {
+    const key = this.keys.find(k => k.id === id);
+    if (key) {
+      Object.assign(key, updates);
+      this.saveKeys();
+    }
+  }
+
+  // Enhanced test key with automatic status management
+  async testGeminiKey(keyId: string): Promise<{ success: boolean; error?: string }> {
+    const key = this.getKeyById(keyId);
+    if (!key) {
+      return { success: false, error: 'Anahtar bulunamadı' };
+    }
+
+    console.log('Testing Gemini API key:', key.name);
+
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${key}`, {
+      // Set loading state
+      this.setKeyTestStatus(keyId, 'testing');
+
+      // Test with primary model first
+      let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key.key}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           contents: [{
-            parts: [{ text: 'Test' }]
+            parts: [{
+              text: 'Merhaba! Bu bir test mesajıdır. Lütfen sadece "TEST BAŞARILI" yazarak yanıt ver.'
+            }]
           }],
           generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 50
+          }
+        })
+      });
+
+      // If primary model fails with 404, try fallback model
+      if (response.status === 404) {
+        console.log('Primary model not found, trying fallback model...');
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${key.key}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: 'Merhaba! Bu bir test mesajıdır. Lütfen sadece "TEST BAŞARILI" yazarak yanıt ver.'
+              }]
+            }]
+          })
+        });
+      }
+
+      const currentTime = new Date().toISOString();
+
+      if (response.ok) {
+        console.log('Gemini API test successful for key:', key.name);
+        // Test successful
+        this.updateKeyStatus(keyId, {
+          isActive: true,
+          lastTested: currentTime,
+          testResult: 'success',
+          errorMessage: null
+        });
+
+        this.setKeyTestStatus(keyId, 'success');
+        return { success: true };
+      } else {
+        // Test failed - parse error
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorData = await response.json();
+          console.error('Gemini API Error:', errorData);
+
+          switch (response.status) {
+            case 400:
+              errorMessage = 'Geçersiz istek - API parametreleri hatalı';
+              break;
+            case 401:
+              errorMessage = 'API key geçersiz veya süresi dolmuş';
+              break;
+            case 403:
+              errorMessage = 'API key bu servise erişim yetkisi yok';
+              break;
+            case 404:
+              errorMessage = 'Model bulunamadı - API güncellenmiş olabilir';
+              break;
+            case 429:
+              errorMessage = 'Rate limit aşıldı, daha sonra tekrar deneyin';
+              break;
+            case 500:
+              errorMessage = 'Sunucu hatası - Daha sonra tekrar deneyin';
+              break;
+            default:
+              errorMessage = `API Hatası: ${response.status}`;
+              if (errorData?.error?.message) {
+                errorMessage += ` - ${errorData.error.message}`;
+              }
+          }
+        } catch (parseError) {
+          console.error('Error parsing response:', parseError);
+          // If we can't parse the error response, use generic message
+        }
+
+        console.error('Gemini API test failed for key:', key.name, 'Error:', errorMessage);
+
+        // Test failed - disable key
+        this.updateKeyStatus(keyId, {
+          isActive: false,
+          lastTested: currentTime,
+          testResult: 'failed',
+          errorMessage: errorMessage
+        });
+
+        this.setKeyTestStatus(keyId, 'failed');
+        return { success: false, error: errorMessage };
+      }
+    } catch (error) {
+      console.error('Network error during test:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const currentTime = new Date().toISOString();
+
+      // Network or other error
+      this.updateKeyStatus(keyId, {
+        isActive: false,
+        lastTested: currentTime,
+        testResult: 'failed',
+        errorMessage: 'İnternet bağlantısı sorunu: ' + errorMessage
+      });
+
+      this.setKeyTestStatus(keyId, 'failed');
+      return { success: false, error: 'İnternet bağlantısı sorunu: ' + errorMessage };
+    }
+  }
+
+  // Test a key (legacy method for backward compatibility)
+  async testKey(key: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: 'Test mesajı - sadece "OK" yanıtla' }]
+          }],
+          generationConfig: {
+            temperature: 0.1,
             maxOutputTokens: 10
           }
         })
@@ -216,7 +428,7 @@ export class GeminiKeyManager {
   getKeyStats(): { total: number; active: number; failed: number } {
     const total = this.keys.length;
     const active = this.keys.filter(key => key.isActive).length;
-    const failed = this.keys.filter(key => key.failedAttempts > 0).length;
+    const failed = this.keys.filter(key => key.failureCount > 0).length;
 
     return { total, active, failed };
   }
