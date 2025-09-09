@@ -165,7 +165,6 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({
                           {new Date(recording.timestamp).toLocaleDateString('tr-TR')} {new Date(recording.timestamp).toLocaleTimeString('tr-TR')}
                         </span>
                         <span>Süre: {formatDuration(recording.duration)}</span>
-                        <span>Kalite: {recording.quality}</span>
                         <span>👥 {recording.speakerCount} kişi</span>
                       </div>
                     </div>
@@ -197,15 +196,23 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({
                   <p className="text-sm text-gray-600 leading-relaxed">
                     {getTruncatedContent(recording.rawTranscript || recording.geminiTranscript || 'Transkripsiyon mevcut değil')}
                   </p>
-                  
-                  {(recording.aiImproved || recording.aiImprovedTranscript) && (
+
+                  {recording.rawTranscript && typeof recording.rawTranscript === 'string' && recording.rawTranscript.trim() !== '' && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-green-600">
+                      <div className="w-2 h-2 bg-green-600 rounded-full"></div>
+                      Ham transkripsiyon mevcut
+                    </div>
+                  )}
+
+                  {((recording.aiImproved && typeof recording.aiImproved === 'string' && recording.aiImproved.trim() !== '') ||
+                    (recording.aiImprovedTranscript && typeof recording.aiImprovedTranscript === 'string' && recording.aiImprovedTranscript.trim() !== '')) && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
                       <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
                       AI iyileştirmesi mevcut
                     </div>
                   )}
                   
-                  {recording.geminiTranscription && (
+                  {recording.geminiTranscript && typeof recording.geminiTranscript === 'string' && recording.geminiTranscript.trim() !== '' && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-purple-600">
                       <div className="w-2 h-2 bg-purple-600 rounded-full"></div>
                       Gemini transkripsiyon mevcut

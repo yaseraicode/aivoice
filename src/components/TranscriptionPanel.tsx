@@ -19,7 +19,9 @@ interface TranscriptionPanelProps {
   setGeminiTranscription: (text: string) => void;
   recordedAudio: Blob | null;
   isRecording: boolean;
+  currentRecordingId: string | null;
   onSaveRecording?: () => void;
+  onUpdateRecording?: (id: string, updates: any) => void;
 }
 
 const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
@@ -31,7 +33,9 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   setGeminiTranscription,
   recordedAudio,
   isRecording,
-  onSaveRecording
+  currentRecordingId,
+  onSaveRecording,
+  onUpdateRecording
 }) => {
   const [activeTab, setActiveTab] = useState<'realtime' | 'gemini' | 'ai' | 'comparison'>('realtime');
   const [isImproving, setIsImproving] = useState(false);
@@ -52,32 +56,80 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     setEditableText(transcript);
   }, [transcript]);
 
+  // Cleanup audio resources on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
   // Audio playback functions with progress tracking
   const playRecordedAudio = () => {
     if (recordedAudio && !isPlayingAudio) {
+      // Clean up previous audio if exists
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
       const audioUrl = URL.createObjectURL(recordedAudio);
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
 
       // Set up event listeners for progress tracking
       audio.onloadedmetadata = () => {
+        console.log('Audio loaded, duration:', audio.duration);
         setAudioDuration(audio.duration);
+        setCurrentTime(0);
+        setAudioProgress(0);
+      };
+
+      audio.onloadeddata = () => {
+        console.log('Audio data loaded');
+      };
+
+      audio.oncanplay = () => {
+        console.log('Audio can play');
       };
 
       audio.ontimeupdate = () => {
-        setCurrentTime(audio.currentTime);
-        setAudioProgress((audio.currentTime / audio.duration) * 100);
+        if (audio.duration && !isNaN(audio.duration)) {
+          const currentTime = audio.currentTime;
+          const duration = audio.duration;
+          const progress = (currentTime / duration) * 100;
+
+          setCurrentTime(currentTime);
+          setAudioProgress(progress);
+        }
       };
 
-      audio.onplay = () => setIsPlayingAudio(true);
-      audio.onpause = () => setIsPlayingAudio(false);
+      audio.onplay = () => {
+        console.log('Audio started playing');
+        setIsPlayingAudio(true);
+      };
+
+      audio.onpause = () => {
+        console.log('Audio paused');
+        setIsPlayingAudio(false);
+      };
+
       audio.onended = () => {
+        console.log('Audio ended');
         setIsPlayingAudio(false);
         setCurrentTime(0);
         setAudioProgress(0);
-        URL.revokeObjectURL(audioUrl);
+        // Don't revoke URL here as we might want to replay
       };
 
+      audio.onerror = (err) => {
+        console.error('Audio error:', err);
+        setIsPlayingAudio(false);
+      };
+
+      // Start playing
       audio.play().catch(err => {
         console.error('Audio playback error:', err);
         setIsPlayingAudio(false);
@@ -121,6 +173,19 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Count speakers from Gemini transcription
+  const countSpeakersFromTranscription = (transcription: string): number => {
+    // Match patterns like "A Kişisi", "B Kişisi", "C Kişisi", etc.
+    const speakerPattern = /([A-Z])\s*Kişisi/gi;
+    const matches = transcription.match(speakerPattern);
+
+    if (!matches) return 1;
+
+    // Get unique speaker letters
+    const uniqueSpeakers = new Set(matches.map(match => match.charAt(0).toUpperCase()));
+    return Math.max(uniqueSpeakers.size, 1);
   };
 
   // Gemini API Integration - Audio Transcription with Key Rotation
@@ -222,18 +287,27 @@ Başlıkları 📋 BAŞLIK: formatında göster. Noktalama işaretlerini ekle ve
       setGeminiTranscription(transcribedText);
       setActiveTab('gemini');
 
+      // Count speakers from transcription and update recording
+      const detectedSpeakerCount = countSpeakersFromTranscription(transcribedText);
+      console.log(`🎤 Detected ${detectedSpeakerCount} speakers in Gemini transcription`);
+
+      // Update recording with correct speaker count
+      if (onUpdateRecording) {
+        // Update the current recording if we have an ID, otherwise update the most recent
+        onUpdateRecording(currentRecordingId || '', {
+          geminiTranscript: transcribedText,
+          speakerCount: detectedSpeakerCount
+        });
+      }
+
       // Mark key as used and rotate to next key for round-robin
       keyManager.markKeyAsUsed(currentKey.id);
       keyManager.rotateKey();
 
       console.log(`✅ Successfully used key: ${currentKey.name}, rotated to next key`);
 
-      // Gemini transkripsiyon tamamlandığında kaydet
-      if (onSaveRecording) {
-        setTimeout(() => {
-          onSaveRecording();
-        }, 500);
-      }
+      // Gemini transkripsiyon tamamlandığında - mevcut kaydı güncelle
+      // onSaveRecording çağrısı kaldırıldı çünkü yeni kayıt oluşturuyor
       
     } catch (error) {
       console.error('Gemini ses transkripsiyon hatası:', error);
@@ -252,11 +326,12 @@ Sistem: Ses dosyası boyutu ${(audioBlob.size / 1024).toFixed(2)} KB, format: ${
       setGeminiTranscription(demoTranscription);
       setActiveTab('gemini');
       
-      // Demo transkripsiyon için de kaydet
-      if (onSaveRecording) {
-        setTimeout(() => {
-          onSaveRecording();
-        }, 500);
+      // Demo transkripsiyon için de mevcut kaydı güncelle
+      if (onUpdateRecording) {
+        onUpdateRecording(currentRecordingId || '', {
+          geminiTranscript: demoTranscription,
+          speakerCount: 1
+        });
       }
     } finally {
       setIsGeminiTranscribing(false);
@@ -404,6 +479,14 @@ ${rawTranscription}`
 
       setAiImprovement(improvement);
       setActiveTab('ai');
+
+      // Update recording with AI improvement
+      if (onUpdateRecording) {
+        onUpdateRecording(currentRecordingId || '', {
+          aiImprovedTranscript: improvedText,
+          processedTranscript: improvedText
+        });
+      }
 
       // Mark key as used and rotate to next key for round-robin
       keyManager.markKeyAsUsed(currentKey.id);
@@ -720,7 +803,7 @@ ${rawTranscription}`
                 </div>
 
                 <span className="text-sm font-medium text-gray-700 min-w-[40px]">
-                  {formatTime(audioDuration)}
+                  {audioDuration > 0 ? formatTime(audioDuration) : '0:00'}
                 </span>
               </div>
             </div>

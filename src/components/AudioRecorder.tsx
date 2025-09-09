@@ -38,12 +38,14 @@ export default function AudioRecorder({
   const [speakerHistory, setSpeakerHistory] = useState<string[]>(['Kişi A']);
   const [speakerCount, setSpeakerCount] = useState(1);
   const [lastSpeechTime, setLastSpeechTime] = useState(Date.now());
-  
+  const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
+  const [recordingTimer, setRecordingTimer] = useState<number | null>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const silenceTimeoutRef = useRef<number | null>(null);
   const interimTextRef = useRef<string>('');
   const finalTextRef = useRef<string>('');
 
@@ -365,6 +367,7 @@ export default function AudioRecorder({
       finalTextRef.current = '';
       interimTextRef.current = '';
       setRealtimeText('');
+      setTranscript(''); // İkinci kayıt için transcript state'ini temizle
       setCurrentSpeaker('Kişi A');
       setSpeakerHistory(['Kişi A']);
       setSpeakerCount(1);
@@ -407,8 +410,20 @@ export default function AudioRecorder({
         recognition.start();
       }
       
+      // Start recording timer
+      const startTime = Date.now();
+      setRecordingStartTime(startTime);
+      setRecordingTime(0);
+
+      const timer = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        setRecordingTime(elapsed);
+      }, 1000);
+
+      setRecordingTimer(timer);
+
       setIsRecording(true);
-      
+
     } catch (err) {
       console.error('Recording start error:', err);
       // Internal error kodlarını kullanıcıya gösterme
@@ -427,25 +442,32 @@ export default function AudioRecorder({
 
   const stopRecording = () => {
     try {
+      // Clear recording timer
+      if (recordingTimer) {
+        clearInterval(recordingTimer);
+        setRecordingTimer(null);
+      }
+      setRecordingStartTime(null);
+
       // Stop MediaRecorder
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
-      
+
       // Stop Speech Recognition
       if (recognitionRef.current) {
         recognitionRef.current.stop();
         recognitionRef.current = null;
       }
-      
+
       // Stop audio stream
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
       }
-      
+
       setIsRecording(false);
-      
+
     } catch (err: any) {
       console.error('Recording stop error:', err);
       setError(`Kayıt durdurulamadı: ${err instanceof Error ? err.message : 'Bilinmeyen hata'}`);
@@ -556,7 +578,18 @@ export default function AudioRecorder({
       </div>
 
       {/* Recording Controls */}
-      <div className="flex items-center justify-center space-x-4 mb-6">
+      <div className="flex flex-col items-center space-y-4 mb-6">
+        {/* Recording Timer Display */}
+        {isRecording && (
+          <div className="flex items-center space-x-3 px-4 py-2 bg-red-50 border border-red-200 rounded-lg">
+            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-lg font-mono font-semibold text-red-700">
+              {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+            </span>
+            <span className="text-sm text-red-600">kayıt süresi</span>
+          </div>
+        )}
+
         <button
           onClick={toggleRecording}
           className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-all ${

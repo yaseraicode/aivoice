@@ -22,6 +22,7 @@ function App() {
     const saved = localStorage.getItem('voicescript-recordings');
     return saved ? JSON.parse(saved) : [];
   });
+  const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
 
   // Update legacy state when aiImprovement changes
   useEffect(() => {
@@ -52,8 +53,9 @@ function App() {
           }
         }
 
+        const newRecordingId = Date.now().toString();
         const recordingData = {
-          id: Date.now().toString(),
+          id: newRecordingId,
           title: `Kayıt - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`,
           timestamp: new Date().toISOString(),
           duration: recordingTime,
@@ -74,9 +76,41 @@ function App() {
 
         const updatedRecordings = [...recordings, recordingData];
         setRecordings(updatedRecordings);
-        localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
 
-        console.log('Kayıt başarıyla kaydedildi. Toplam kayıt sayısı:', updatedRecordings.length);
+        // Yeni kaydın ID'sini aktif kayıt olarak ayarla
+        setCurrentRecordingId(newRecordingId);
+
+        // Try to save to localStorage with error handling
+        try {
+          localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
+          console.log('Kayıt başarıyla kaydedildi. Toplam kayıt sayısı:', updatedRecordings.length);
+        } catch (error) {
+          console.warn('localStorage quota exceeded during save, cleaning up...');
+
+          // If quota exceeded, keep only the most recent 5 recordings
+          const recentRecordings = updatedRecordings.slice(0, 5);
+          setRecordings(recentRecordings);
+
+          try {
+            localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
+            console.log('Cleaned up recordings during save, kept only the 5 most recent ones');
+          } catch (secondError) {
+            console.error('Still unable to save to localStorage during save operation:', secondError);
+            // Clear all except current
+            const currentRecording = updatedRecordings[updatedRecordings.length - 1];
+            if (currentRecording) {
+              setRecordings([currentRecording]);
+              try {
+                localStorage.setItem('voicescript-recordings', JSON.stringify([currentRecording]));
+                console.log('Kept only the current recording during save operation');
+              } catch (thirdError) {
+                console.error('Unable to save even current recording:', thirdError);
+                localStorage.removeItem('voicescript-recordings');
+                setRecordings([]);
+              }
+            }
+          }
+        }
       };
 
       saveRecordingData();
@@ -112,6 +146,7 @@ function App() {
 
   const handleLoadRecording = (recording: unknown) => {
     const rec = recording as {
+      id?: string;
       rawTranscript?: string;
       geminiTranscript?: string;
       processedTranscript?: string;
@@ -122,6 +157,20 @@ function App() {
     };
 
     console.log('Kayıt yükleniyor:', rec);
+
+    // Aktif kayıt ID'sini ayarla
+    setCurrentRecordingId(rec.id || null);
+
+    // Önceki state'leri temizle
+    setTranscript('');
+    setGeminiTranscription('');
+    setProcessedTranscript('');
+    setAiImprovedTranscript('');
+    setAiImprovement(null);
+    setRealtimeText('');
+    setRecordingTime(0);
+
+    // Yeni kaydın verilerini yükle
     setTranscript(rec.rawTranscript || '');
     setGeminiTranscription(rec.geminiTranscript || '');
     setProcessedTranscript(rec.processedTranscript || '');
@@ -159,27 +208,95 @@ function App() {
 
   const handleRecordingComplete = (audioBlob: Blob, finalText: string) => {
     console.log('Recording completed:', { audioBlobSize: audioBlob.size, finalTextLength: finalText.length });
+    console.log('Final text content:', finalText);
+    console.log('Current transcript before update:', transcript);
+
     setRecordedAudio(audioBlob);
     setTranscript(finalText);
-    
+
+    console.log('Transcript after update:', finalText);
+    console.log('Current recording ID before save:', currentRecordingId);
+
     // Otomatik kaydetme - kayıt tamamlandığında
     saveCurrentRecording(audioBlob, finalText);
-    saveCurrentRecording();
   };
 
   const handleDeleteRecording = (id: string) => {
     const updatedRecordings = recordings.filter(recording => recording.id !== id);
     setRecordings(updatedRecordings);
-    localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
+
+    try {
+      localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
+    } catch (error) {
+      console.warn('localStorage quota exceeded during delete operation:', error);
+      // If quota exceeded during delete, try to save with cleanup
+      try {
+        const recentRecordings = updatedRecordings.slice(0, 5);
+        setRecordings(recentRecordings);
+        localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
+        console.log('Cleaned up recordings during delete operation');
+      } catch (secondError) {
+        console.error('Unable to save after cleanup during delete:', secondError);
+        localStorage.removeItem('voicescript-recordings');
+        setRecordings([]);
+      }
+    }
   };
 
   const handleUpdateRecording = (id: string, updates: unknown) => {
-    const updatedRecordings = recordings.map(recording => {
-      const rec = recording as Record<string, unknown>;
-      return (rec.id === id) ? { ...rec, ...(updates as Record<string, unknown>) } : rec;
-    });
+    let updatedRecordings;
+
+    if (!id && recordings.length > 0) {
+      // If no ID provided, update the most recent recording
+      const mostRecentRecording = recordings[0];
+      updatedRecordings = recordings.map(recording =>
+        recording.id === mostRecentRecording.id
+          ? { ...recording, ...(updates as Record<string, unknown>) }
+          : recording
+      );
+    } else {
+      // Update specific recording by ID
+      updatedRecordings = recordings.map(recording => {
+        const rec = recording as Record<string, unknown>;
+        return (rec.id === id) ? { ...rec, ...(updates as Record<string, unknown>) } : rec;
+      });
+    }
+
     setRecordings(updatedRecordings);
-    localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
+
+    // Try to save to localStorage with error handling
+    try {
+      localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
+    } catch (error) {
+      console.warn('localStorage quota exceeded, cleaning up old recordings...');
+
+      // If quota exceeded, keep only the most recent 5 recordings
+      const recentRecordings = updatedRecordings.slice(0, 5);
+      setRecordings(recentRecordings);
+
+      try {
+        localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
+        console.log('Cleaned up recordings, kept only the 5 most recent ones');
+      } catch (secondError) {
+        console.error('Still unable to save to localStorage:', secondError);
+        // If still failing, clear all recordings except the current one
+        const currentRecording = updatedRecordings[0];
+        if (currentRecording) {
+          const minimalRecordings = [currentRecording];
+          setRecordings(minimalRecordings);
+          try {
+            localStorage.setItem('voicescript-recordings', JSON.stringify(minimalRecordings));
+            console.log('Kept only the current recording due to storage limitations');
+          } catch (thirdError) {
+            console.error('Critical: Unable to save even minimal data to localStorage:', thirdError);
+            // Last resort: clear localStorage completely
+            localStorage.removeItem('voicescript-recordings');
+            setRecordings([]);
+            console.log('Cleared all recordings from localStorage due to quota issues');
+          }
+        }
+      }
+    }
   };
 
   const tabs = [
@@ -305,7 +422,9 @@ function App() {
                   setGeminiTranscription={setGeminiTranscription}
                   recordedAudio={recordedAudio}
                   isRecording={isRecording}
+                  currentRecordingId={currentRecordingId}
                   onSaveRecording={() => saveCurrentRecording()}
+                  onUpdateRecording={handleUpdateRecording}
                 />
               )}
 
@@ -313,6 +432,7 @@ function App() {
                 <RecordingHistory
                   recordings={recordings}
                   onLoadRecording={handleLoadRecording}
+                  activeRecordingId={currentRecordingId}
                   onDeleteRecording={handleDeleteRecording}
                   onUpdateRecording={handleUpdateRecording}
                 />
