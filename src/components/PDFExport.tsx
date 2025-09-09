@@ -369,7 +369,6 @@ const PDFExport: React.FC<PDFExportProps> = ({
           <div className="text-center">
             <h3 className="font-semibold text-gray-800">Ham Transkripsiyon</h3>
             <p className="text-sm text-gray-600">Düzenlenmemiş kayıt metni</p>
-            <p className="text-xs text-green-600 mt-1">✓ Türkçe karakter düzeltmeli</p>
           </div>
         </button>
 
@@ -383,7 +382,6 @@ const PDFExport: React.FC<PDFExportProps> = ({
           <div className="text-center">
             <h3 className="font-semibold text-gray-800">AI İyileştirilmiş</h3>
             <p className="text-sm text-gray-600">Yapay zeka ile düzenlenmiş</p>
-            <p className="text-xs text-green-600 mt-1">✓ Türkçe karakter düzeltmeli</p>
           </div>
         </button>
 
@@ -397,7 +395,6 @@ const PDFExport: React.FC<PDFExportProps> = ({
           <div className="text-center">
             <h3 className="font-semibold text-gray-800">Karşılaştırmalı</h3>
             <p className="text-sm text-gray-600">Her iki versiyon birlikte</p>
-            <p className="text-xs text-green-600 mt-1">✓ Türkçe karakter düzeltmeli</p>
           </div>
         </button>
       </div>

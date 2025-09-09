@@ -3,6 +3,7 @@ export interface GeminiKey {
   name: string;
   key: string; // encrypted
   isActive: boolean;
+  status: 'active' | 'failed' | 'passive'; // Yeni durum alanı
   createdAt: string;
   updatedAt: string;
   lastUsed: string;
@@ -44,7 +45,8 @@ export class GeminiKeyManager {
         const data: KeyStorage = JSON.parse(stored);
         this.keys = data.geminiKeys.map(key => ({
           ...key,
-          key: this.decrypt(key.key)
+          key: this.decrypt(key.key),
+          status: key.status || (key.isActive ? 'active' : 'passive') // Eski veriler için geriye uyumluluk
         }));
         this.currentKeyIndex = data.lastRotated ? this.getNextActiveKeyIndex() : 0;
       }
@@ -101,6 +103,7 @@ export class GeminiKeyManager {
       name: name.trim(),
       key: apiKey.trim(),
       isActive: true,
+      status: 'active',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       lastUsed: '',
@@ -162,6 +165,7 @@ export class GeminiKeyManager {
     const key = this.keys.find(k => k.id === keyId);
     if (key) {
       key.failureCount += 1;
+      key.status = 'failed';
 
       // Disable key if too many failures
       if (key.failureCount >= 3) {
@@ -253,7 +257,7 @@ export class GeminiKeyManager {
   }
 
   // Update key status after test
-  updateKeyStatus(id: string, updates: Partial<Pick<GeminiKey, 'isActive' | 'lastTested' | 'testResult' | 'errorMessage'>>): void {
+  updateKeyStatus(id: string, updates: Partial<Pick<GeminiKey, 'isActive' | 'status' | 'lastTested' | 'testResult' | 'errorMessage'>>): void {
     const key = this.keys.find(k => k.id === id);
     if (key) {
       Object.assign(key, updates);
@@ -318,6 +322,7 @@ export class GeminiKeyManager {
         // Test successful
         this.updateKeyStatus(keyId, {
           isActive: true,
+          status: 'active',
           lastTested: currentTime,
           testResult: 'success',
           errorMessage: null
@@ -368,6 +373,7 @@ export class GeminiKeyManager {
         // Test failed - disable key
         this.updateKeyStatus(keyId, {
           isActive: false,
+          status: 'failed',
           lastTested: currentTime,
           testResult: 'failed',
           errorMessage: errorMessage
@@ -384,6 +390,7 @@ export class GeminiKeyManager {
       // Network or other error
       this.updateKeyStatus(keyId, {
         isActive: false,
+        status: 'failed',
         lastTested: currentTime,
         testResult: 'failed',
         errorMessage: 'İnternet bağlantısı sorunu: ' + errorMessage
@@ -428,7 +435,7 @@ export class GeminiKeyManager {
   getKeyStats(): { total: number; active: number; failed: number } {
     const total = this.keys.length;
     const active = this.keys.filter(key => key.isActive).length;
-    const failed = this.keys.filter(key => key.failureCount > 0).length;
+    const failed = this.keys.filter(key => key.status === 'failed').length;
 
     return { total, active, failed };
   }

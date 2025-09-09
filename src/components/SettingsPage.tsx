@@ -62,7 +62,8 @@ const SettingsPage: React.FC = () => {
   };
 
   const handleToggleKeyStatus = (id: string, isActive: boolean) => {
-    keyManager.updateKey(id, { isActive: !isActive });
+    const newStatus = !isActive ? 'active' : 'passive';
+    keyManager.updateKey(id, { isActive: !isActive, status: newStatus });
     loadKeys();
     showNotification('success', `API anahtarı ${!isActive ? 'aktif' : 'pasif'} duruma getirildi.`);
   };
@@ -141,7 +142,7 @@ const SettingsPage: React.FC = () => {
       <div className="flex items-center justify-between p-6 border-b border-gray-200">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
           <Settings className="w-6 h-6 text-blue-600" />
-          Gemini API Anahtar Yönetimi
+          Yapay Zeka API Anahtar Yönetimi
         </h2>
 
         <div className="flex items-center gap-4 text-sm text-gray-600">
@@ -154,7 +155,7 @@ const SettingsPage: React.FC = () => {
             <span>Pasif: {stats.total - stats.active}</span>
           </div>
           <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+            <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
             <span>Hatalı: {stats.failed}</span>
           </div>
         </div>
@@ -169,7 +170,7 @@ const SettingsPage: React.FC = () => {
             <div>
               <h3 className="text-sm font-semibold text-blue-800 mb-1">Bilgi</h3>
               <p className="text-sm text-blue-700">
-                Gemini API anahtarlarınız yerel depolamada şifrelenmiş olarak saklanır.
+                API anahtarlarınız yerel depolamada şifrelenmiş olarak saklanır.
                 Anahtarlar round-robin mantığıyla otomatik olarak döndürülür.
                 Hatalı anahtarlar otomatik olarak devre dışı bırakılır.
               </p>
@@ -213,7 +214,7 @@ const SettingsPage: React.FC = () => {
                   type="password"
                   value={newKeyValue}
                   onChange={(e) => setNewKeyValue(e.target.value)}
-                  placeholder="AIzaSyB97Y46aps-D-cIw7jG44EXIJbBQYc91lU"
+                  placeholder="sadEzaDDSSyB97Y46aps-D-cIw7jG44EXIJbBQYc91lU"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
                 />
               </div>
@@ -342,118 +343,126 @@ const SettingsPage: React.FC = () => {
               </p>
             </div>
           ) : (
-            keys.map((key) => (
-              <div key={key.id} className={`key-item border rounded-lg p-4 shadow-sm ${
-                key.isActive ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-              }`}>
-                <div className="key-info flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className={`status text-lg ${
-                      key.isActive ? '🟢' : '🔴'
-                    }`}>
-                      {key.isActive ? 'Aktif' : 'Pasif'}
-                    </span>
-                    <h3 className="text-lg font-semibold text-gray-800">{key.name}</h3>
-                    {key.failureCount > 0 && (
-                      <div className="flex items-center gap-1 text-yellow-600">
-                        <AlertTriangle className="w-4 h-4" />
-                        <span className="text-sm">Hata: {key.failureCount}</span>
-                      </div>
-                    )}
-                  </div>
+            keys.map((key) => {
+              const getStatusInfo = () => {
+                switch (key.status) {
+                  case 'active':
+                    return { emoji: '🟢', text: 'Aktif', bgClass: 'bg-green-50 border-green-200' };
+                  case 'failed':
+                    return { emoji: '🟠', text: 'Hatalı', bgClass: 'bg-orange-50 border-orange-200' };
+                  case 'passive':
+                    return { emoji: '🔴', text: 'Pasif', bgClass: 'bg-red-50 border-red-200' };
+                  default:
+                    return { emoji: '⚪', text: 'Bilinmiyor', bgClass: 'bg-gray-50 border-gray-200' };
+                }
+              };
 
-                  <div className="key-actions flex items-center gap-2">
-                    <button
-                      onClick={() => handleTestKey(key.id)}
-                      disabled={key.testStatus === 'testing'}
-                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm transition-colors disabled:opacity-50"
-                    >
-                      {key.testStatus === 'testing' ? (
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      ) : (
-                        <TestTube className="w-4 h-4" />
+              const statusInfo = getStatusInfo();
+
+              return (
+                <div key={key.id} className={`key-item border rounded-lg p-4 shadow-sm ${statusInfo.bgClass}`}>
+                  <div className="key-info flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <span className={`status text-lg ${key.status === 'failed' ? 'text-orange-600' : ''}`}>
+                        {statusInfo.emoji} {statusInfo.text}
+                      </span>
+                      <h3 className="text-lg font-semibold text-gray-800">{key.name}</h3>
+                      {key.failureCount > 0 && (
+                        <div className="flex items-center gap-1 text-orange-600">
+                          <AlertTriangle className="w-4 h-4" />
+                          <span className="text-sm">Hata: {key.failureCount}</span>
+                        </div>
                       )}
-                      {key.testStatus === 'testing' ? 'Test ediliyor...' : 'Test Et'}
-                    </button>
-                    <button
-                      onClick={() => handleToggleKeyStatus(key.id, key.isActive)}
-                      className={`flex items-center gap-2 px-3 py-1 rounded-lg text-sm transition-colors ${
-                        key.isActive
-                          ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                          : 'bg-green-600 hover:bg-green-700 text-white'
-                      }`}
-                    >
-                      {key.isActive ? 'Pasife Çek' : 'Aktife Çek'}
-                    </button>
-                    <button
-                      onClick={() => handleEditKey(key)}
-                      className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                      Düzenle
-                    </button>
-                    <button
-                      onClick={() => handleDeleteKey(key.id)}
-                      className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Sil
-                    </button>
+                    </div>
+
+                    <div className="key-actions flex items-center gap-2">
+                      <button
+                        onClick={() => handleTestKey(key.id)}
+                        disabled={key.testStatus === 'testing'}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm transition-colors disabled:opacity-50"
+                      >
+                        {key.testStatus === 'testing' ? (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                          <TestTube className="w-4 h-4" />
+                        )}
+                        {key.testStatus === 'testing' ? 'Test ediliyor...' : 'Test Et'}
+                      </button>
+                      <button
+                        onClick={() => handleToggleKeyStatus(key.id, key.isActive)}
+                        className={`flex items-center gap-2 px-3 py-1 rounded-lg text-sm transition-colors ${
+                          key.isActive
+                            ? 'bg-orange-600 hover:bg-orange-700 text-white'
+                            : 'bg-green-600 hover:bg-green-700 text-white'
+                        }`}
+                      >
+                        {key.isActive ? 'Pasife Çek' : 'Aktife Çek'}
+                      </button>
+                      <button
+                        onClick={() => handleEditKey(key)}
+                        className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                        Düzenle
+                      </button>
+                      <button
+                        onClick={() => handleDeleteKey(key.id)}
+                        className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Sil
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Key Value */}
+                  <div className="mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-700">API Anahtarı:</span>
+                      <button
+                        onClick={() => toggleKeyVisibility(key.id)}
+                        className="text-blue-600 hover:text-blue-800 text-sm"
+                      >
+                        {showKeyValue === key.id ? (
+                          <EyeOff className="w-4 h-4 inline" />
+                        ) : (
+                          <Eye className="w-4 h-4 inline" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="font-mono text-sm bg-gray-50 border border-gray-300 rounded px-3 py-2 mt-1">
+                      {showKeyValue === key.id ? key.key : maskApiKey(key.key)}
+                    </div>
+                  </div>
+
+                  {/* Test Result */}
+                  {key.testResult === 'failed' && key.errorMessage && (
+                    <div className="error-message mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
+                      ❌ Hata: {key.errorMessage}
+                    </div>
+                  )}
+
+                  {/* Key Info */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                    <div>
+                      <span className="font-medium">Oluşturulma:</span>
+                      <br />
+                      {new Date(key.createdAt).toLocaleDateString('tr-TR')}
+                    </div>
+                    <div>
+                      <span className="font-medium">Güncellenme:</span>
+                      <br />
+                      {new Date(key.updatedAt).toLocaleDateString('tr-TR')}
+                    </div>
+                    <div>
+                      <span className="font-medium">Son Test:</span>
+                      <br />
+                      {formatDate(key.lastTested)}
+                    </div>
                   </div>
                 </div>
-
-                {/* Key Value */}
-                <div className="mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700">API Anahtarı:</span>
-                    <button
-                      onClick={() => toggleKeyVisibility(key.id)}
-                      className="text-blue-600 hover:text-blue-800 text-sm"
-                    >
-                      {showKeyValue === key.id ? (
-                        <EyeOff className="w-4 h-4 inline" />
-                      ) : (
-                        <Eye className="w-4 h-4 inline" />
-                      )}
-                    </button>
-                  </div>
-                  <div className="font-mono text-sm bg-gray-50 border border-gray-300 rounded px-3 py-2 mt-1">
-                    {showKeyValue === key.id ? key.key : maskApiKey(key.key)}
-                  </div>
-                </div>
-
-                {/* Test Result */}
-                {key.testResult === 'failed' && key.errorMessage && (
-                  <div className="error-message mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
-                    ❌ Hata: {key.errorMessage}
-                  </div>
-                )}
-
-                {/* Key Info */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                  <div>
-                    <span className="font-medium">Oluşturulma:</span>
-                    <br />
-                    {new Date(key.createdAt).toLocaleDateString('tr-TR')}
-                  </div>
-                  <div>
-                    <span className="font-medium">Güncellenme:</span>
-                    <br />
-                    {new Date(key.updatedAt).toLocaleDateString('tr-TR')}
-                  </div>
-                  <div>
-                    <span className="font-medium">Son Test:</span>
-                    <br />
-                    {formatDate(key.lastTested)}
-                  </div>
-                  <div>
-                    <span className="font-medium">Hata Sayısı:</span>
-                    <br />
-                    {key.failureCount}
-                  </div>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
