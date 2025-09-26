@@ -135,7 +135,7 @@ function App() {
     }
   }, [aiImprovement]);
 
-  const saveCurrentRecording = async (audioBlob?: Blob, transcriptText?: string) => {
+  const saveCurrentRecording = async (audioBlob?: Blob, transcriptText?: string, durationSeconds?: number) => {
     if (isSavingRecordingRef.current) {
       console.log('saveCurrentRecording skipped: previous save still in progress');
       return;
@@ -165,43 +165,49 @@ function App() {
         }
       }
 
+      const effectiveDuration = typeof durationSeconds === 'number' && durationSeconds > 0
+        ? durationSeconds
+        : recordingTime;
+
       setRecordings((prevRecordings) => {
         const existingId = currentRecordingIdRef.current;
-        const recordingId = existingId ?? Date.now().toString();
-        const recordingData: StoredRecording = {
+        const existingIndex = existingId
+          ? prevRecordings.findIndex((recording) => recording.id === existingId)
+          : -1;
+
+        const isNewRecording = existingIndex === -1;
+        const recordingId = isNewRecording ? Date.now().toString() : existingId ?? Date.now().toString();
+        const baseRecording: StoredRecording = {
           id: recordingId,
           title: `Kayıt - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`,
           timestamp: new Date().toISOString(),
-          duration: recordingTime,
+          duration: effectiveDuration,
           rawTranscript: currentTranscript,
-          geminiTranscript: geminiTranscription,
-          processedTranscript: processedTranscript,
-          aiImprovedTranscript: aiImprovedTranscript,
+          geminiTranscript: isNewRecording ? '' : geminiTranscription,
+          processedTranscript: isNewRecording ? '' : processedTranscript,
+          aiImprovedTranscript: isNewRecording ? '' : aiImprovedTranscript,
           quality: 'medium',
           audioData: audioBase64,
           audioType: currentAudio?.type || 'audio/webm',
           speakerCount: 1
         };
 
-        const existingIndex = existingId
-          ? prevRecordings.findIndex((recording) => recording.id === existingId)
-          : -1;
-
-        if (existingIndex === -1) {
+        if (isNewRecording) {
           console.log('Yeni kayıt ekleniyor:', {
-            id: recordingData.id,
-            audioData: recordingData.audioData ? `${recordingData.audioData.length} karakter` : 'yok',
+            id: baseRecording.id,
+            audioData: baseRecording.audioData ? `${baseRecording.audioData.length} karakter` : 'yok',
+            duration: effectiveDuration,
           });
 
-          setCurrentRecordingId(recordingData.id);
-          currentRecordingIdRef.current = recordingData.id;
-          return persistRecordings([...prevRecordings, recordingData]);
+          setCurrentRecordingId(baseRecording.id);
+          currentRecordingIdRef.current = baseRecording.id;
+          return persistRecordings([...prevRecordings, baseRecording]);
         }
 
         console.log('Mevcut kayıt güncelleniyor:', {
-          id: recordingData.id,
-          audioLength: recordingTime,
-          transcriptLength: recordingData.rawTranscript.length,
+          id: baseRecording.id,
+          audioLength: effectiveDuration,
+          transcriptLength: baseRecording.rawTranscript.length,
         });
 
         const updatedRecordings = prevRecordings.map((recording, index) => {
@@ -211,7 +217,7 @@ function App() {
 
           return {
             ...recording,
-            duration: recordingTime,
+            duration: effectiveDuration,
             rawTranscript: currentTranscript,
             geminiTranscript: geminiTranscription,
             processedTranscript: processedTranscript,
@@ -223,6 +229,10 @@ function App() {
 
         return persistRecordings(updatedRecordings);
       });
+
+      if (effectiveDuration > 0) {
+        setRecordingTime(effectiveDuration);
+      }
     } catch (error) {
       console.error('Kayıt kaydetme hatası:', error);
     } finally {
@@ -279,7 +289,7 @@ function App() {
     setAiImprovedTranscript('');
     setAiImprovement(null);
     setRealtimeText('');
-    setRecordingTime(0);
+    setRecordingTime(rec.duration ?? 0);
 
     // Yeni kaydın verilerini yükle
     setTranscript(rec.rawTranscript || '');
@@ -317,19 +327,22 @@ function App() {
     setActiveTab('transcription');
   };
 
-  const handleRecordingComplete = (audioBlob: Blob, finalText: string) => {
-    console.log('Recording completed:', { audioBlobSize: audioBlob.size, finalTextLength: finalText.length });
+  const handleRecordingComplete = (audioBlob: Blob, finalText: string, durationSeconds: number) => {
+    console.log('Recording completed:', { audioBlobSize: audioBlob.size, finalTextLength: finalText.length, durationSeconds });
     console.log('Final text content:', finalText);
     console.log('Current transcript before update:', transcript);
 
     setRecordedAudio(audioBlob);
     setTranscript(finalText);
+    if (durationSeconds > 0) {
+      setRecordingTime(durationSeconds);
+    }
 
     console.log('Transcript after update:', finalText);
     console.log('Current recording ID before save:', currentRecordingId);
 
     // Otomatik kaydetme - kayıt tamamlandığında
-    void saveCurrentRecording(audioBlob, finalText);
+    void saveCurrentRecording(audioBlob, finalText, durationSeconds);
   };
 
   const handleDeleteRecording = (id: string) => {
@@ -481,6 +494,7 @@ function App() {
                   recordedAudio={recordedAudio}
                   isRecording={isRecording}
                   currentRecordingId={currentRecordingId}
+                  recordingDuration={recordingTime}
                   onSaveRecording={() => {
                     void saveCurrentRecording();
                   }}

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, Square, Play, Pause, Volume2, Users } from 'lucide-react';
 
 interface AudioRecorderProps {
-  onRecordingComplete: (audioBlob: Blob, finalTranscription: string) => void;
+  onRecordingComplete: (audioBlob: Blob, finalTranscription: string, durationSeconds: number) => void;
   transcript: string;
   setTranscript: (text: string) => void;
   isRecording: boolean;
@@ -40,6 +40,7 @@ export default function AudioRecorder({
   const [lastSpeechTime, setLastSpeechTime] = useState(Date.now());
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
   const [recordingTimer, setRecordingTimer] = useState<number | null>(null);
+  const finalDurationRef = useRef<number>(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -364,6 +365,7 @@ export default function AudioRecorder({
     try {
       setError(null);
       audioChunksRef.current = [];
+      finalDurationRef.current = 0;
       finalTextRef.current = '';
       interimTextRef.current = '';
       setRealtimeText('');
@@ -397,7 +399,8 @@ export default function AudioRecorder({
           audioBlobSize: audioBlob.size,
           finalTextLength: finalTextRef.current.length
         });
-        onRecordingComplete(audioBlob, finalTextRef.current);
+        const durationSeconds = finalDurationRef.current || Math.max(recordingTime, 0);
+        onRecordingComplete(audioBlob, finalTextRef.current, durationSeconds);
       };
       
       mediaRecorderRef.current = mediaRecorder;
@@ -447,6 +450,11 @@ export default function AudioRecorder({
         clearInterval(recordingTimer);
         setRecordingTimer(null);
       }
+      const finalDuration = recordingStartTime
+        ? Math.max(0, Math.floor((Date.now() - recordingStartTime) / 1000))
+        : recordingTime;
+      finalDurationRef.current = finalDuration;
+      setRecordingTime(finalDuration);
       setRecordingStartTime(null);
 
       // Stop MediaRecorder

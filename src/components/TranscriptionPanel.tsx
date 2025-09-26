@@ -24,6 +24,7 @@ interface TranscriptionPanelProps {
   currentRecordingId: string | null;
   onSaveRecording?: () => void;
   onUpdateRecording?: (id: string, updates: any) => void;
+  recordingDuration?: number;
 }
 
 const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
@@ -37,7 +38,8 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   isRecording,
   currentRecordingId,
   onSaveRecording,
-  onUpdateRecording
+  onUpdateRecording,
+  recordingDuration
 }) => {
   const [activeTab, setActiveTab] = useState<'realtime' | 'gemini' | 'ai' | 'comparison'>('realtime');
   const [isImproving, setIsImproving] = useState(false);
@@ -49,6 +51,8 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const currentAudioUrlRef = useRef<string | null>(null);
+  const latestDurationRef = useRef(0);
   
   const realtimeTextRef = useRef<HTMLTextAreaElement>(null);
   const aiTextRef = useRef<HTMLTextAreaElement>(null);
@@ -65,8 +69,86 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
         audioRef.current.pause();
         audioRef.current = null;
       }
+      if (currentAudioUrlRef.current) {
+        URL.revokeObjectURL(currentAudioUrlRef.current);
+        currentAudioUrlRef.current = null;
+      }
     };
   }, []);
+
+  // Keep latest duration in a ref for event handlers
+  useEffect(() => {
+    const candidate = audioDuration > 0 ? audioDuration : (recordingDuration ?? 0);
+    latestDurationRef.current = candidate;
+  }, [audioDuration, recordingDuration]);
+
+  // Preload metadata when audio blob changes for accurate duration display
+  useEffect(() => {
+    if (!recordedAudio) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (currentAudioUrlRef.current) {
+        URL.revokeObjectURL(currentAudioUrlRef.current);
+        currentAudioUrlRef.current = null;
+      }
+      setIsPlayingAudio(false);
+      setAudioDuration(recordingDuration ?? 0);
+      setCurrentTime(0);
+      setAudioProgress(0);
+      return;
+    }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (currentAudioUrlRef.current) {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
+    setIsPlayingAudio(false);
+
+    setAudioProgress(0);
+    setCurrentTime(0);
+
+    const fallbackDuration = recordingDuration ?? 0;
+    if (fallbackDuration > 0) {
+      setAudioDuration(fallbackDuration);
+    } else {
+      setAudioDuration(0);
+    }
+
+    const metadataUrl = URL.createObjectURL(recordedAudio);
+    const probe = document.createElement('audio');
+    probe.preload = 'metadata';
+
+    const handleLoadedMetadata = () => {
+      if (Number.isFinite(probe.duration) && probe.duration > 0) {
+        setAudioDuration(probe.duration);
+      }
+      URL.revokeObjectURL(metadataUrl);
+    };
+
+    const handleError = () => {
+      if (fallbackDuration > 0) {
+        setAudioDuration(fallbackDuration);
+      }
+      URL.revokeObjectURL(metadataUrl);
+    };
+
+    probe.addEventListener('loadedmetadata', handleLoadedMetadata);
+    probe.addEventListener('error', handleError);
+    probe.src = metadataUrl;
+    probe.load();
+
+    return () => {
+      probe.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      probe.removeEventListener('error', handleError);
+      URL.revokeObjectURL(metadataUrl);
+    };
+  }, [recordedAudio, recordingDuration]);
 
   // Audio playback functions with progress tracking
   const playRecordedAudio = () => {
@@ -76,15 +158,25 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
         audioRef.current.pause();
         audioRef.current = null;
       }
+      if (currentAudioUrlRef.current) {
+        URL.revokeObjectURL(currentAudioUrlRef.current);
+        currentAudioUrlRef.current = null;
+      }
 
       const audioUrl = URL.createObjectURL(recordedAudio);
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
+      currentAudioUrlRef.current = audioUrl;
 
       // Set up event listeners for progress tracking
       audio.onloadedmetadata = () => {
-        console.log('Audio loaded, duration:', audio.duration);
-        setAudioDuration(audio.duration);
+        const metaDuration = Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : latestDurationRef.current;
+        if (metaDuration > 0) {
+          setAudioDuration(metaDuration);
+          latestDurationRef.current = metaDuration;
+        }
         setCurrentTime(0);
         setAudioProgress(0);
       };
@@ -98,12 +190,17 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
       };
 
       audio.ontimeupdate = () => {
-        if (audio.duration && !isNaN(audio.duration)) {
-          const currentTime = audio.currentTime;
-          const duration = audio.duration;
-          const progress = (currentTime / duration) * 100;
+        const durationCandidate = Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : latestDurationRef.current;
 
-          setCurrentTime(currentTime);
+        const safeDuration = durationCandidate > 0 ? durationCandidate : 0;
+        const time = audio.currentTime;
+
+        setCurrentTime(time);
+
+        if (safeDuration > 0) {
+          const progress = Math.min(100, (time / safeDuration) * 100);
           setAudioProgress(progress);
         }
       };
@@ -121,8 +218,14 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
       audio.onended = () => {
         console.log('Audio ended');
         setIsPlayingAudio(false);
-        setCurrentTime(0);
-        setAudioProgress(0);
+        const safeDuration = latestDurationRef.current;
+        if (safeDuration > 0) {
+          setCurrentTime(safeDuration);
+          setAudioProgress(100);
+        } else {
+          setCurrentTime(0);
+          setAudioProgress(0);
+        }
         // Don't revoke URL here as we might want to replay
       };
 
@@ -155,16 +258,20 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
 
   // Seek to specific time in audio
   const seekAudio = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (audioRef.current && audioDuration > 0) {
-      const rect = event.currentTarget.getBoundingClientRect();
-      const clickX = event.clientX - rect.left;
-      const percentage = clickX / rect.width;
-      const newTime = percentage * audioDuration;
-
-      audioRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-      setAudioProgress(percentage * 100);
+    const audioElement = audioRef.current;
+    const duration = latestDurationRef.current > 0 ? latestDurationRef.current : audioDuration;
+    if (!audioElement || duration <= 0) {
+      return;
     }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = Math.min(duration, Math.max(0, percentage * duration));
+
+    audioElement.currentTime = newTime;
+    setCurrentTime(newTime);
+    setAudioProgress(Math.min(100, percentage * 100));
   };
 
   // Format time display
@@ -805,7 +912,7 @@ ${rawTranscription}`
                 </div>
 
                 <span className="text-sm font-medium text-gray-700 min-w-[40px]">
-                  {audioDuration > 0 ? formatTime(audioDuration) : '0:00'}
+                  {formatTime(latestDurationRef.current > 0 ? latestDurationRef.current : audioDuration)}
                 </span>
               </div>
             </div>
