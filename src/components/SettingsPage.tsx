@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info, Save, RotateCcw } from 'lucide-react';
+import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info, Save } from 'lucide-react';
 import { GeminiKeyManager, GeminiKey } from '../services/GeminiKeyManager';
 
 const SettingsPage: React.FC = () => {
@@ -101,18 +101,23 @@ const SettingsPage: React.FC = () => {
   };
 
   const handleTestKey = async (keyId: string) => {
+    // Optimistically set testing state for immediate UI feedback
+    setKeys(prev => prev.map(key =>
+      key.id === keyId ? { ...key, testStatus: 'testing' } : key
+    ));
+
     try {
       const result = await keyManager.testGeminiKey(keyId);
 
       if (result.success) {
         showNotification('success', 'API anahtarı test edildi - Çalışıyor ✅');
       } else {
-        showNotification('error', `API anahtarı test edildi - Hatalı: ${result.error}`);
+        showNotification('error', `API anahtarı test edilemedi: ${result.error}`);
       }
-
-      loadKeys(); // Refresh to show updated status
     } catch (error) {
       showNotification('error', 'Test sırasında beklenmeyen hata oluştu.');
+    } finally {
+      loadKeys();
     }
   };
 

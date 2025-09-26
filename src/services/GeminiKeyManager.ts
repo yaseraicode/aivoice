@@ -19,6 +19,9 @@ export interface KeyStorage {
   lastRotated: string;
 }
 
+const PRIMARY_GEMINI_MODEL = 'gemini-2.5-flash-preview-09-2025';
+const FALLBACK_GEMINI_MODEL = 'gemini-2.0-flash-exp';
+
 export class GeminiKeyManager {
   private static instance: GeminiKeyManager;
   private keys: GeminiKey[] = [];
@@ -275,11 +278,24 @@ export class GeminiKeyManager {
     console.log('Testing Gemini API key:', key.name);
 
     try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        const offlineMessage = 'Aktif internet bağlantısı bulunamadı. Lütfen bağlantınızı kontrol edin ve tekrar deneyin.';
+
+        this.updateKeyStatus(keyId, {
+          lastTested: new Date().toISOString(),
+          testResult: 'failed',
+          errorMessage: offlineMessage,
+        });
+
+        this.setKeyTestStatus(keyId, 'failed');
+        return { success: false, error: offlineMessage };
+      }
+
       // Set loading state
       this.setKeyTestStatus(keyId, 'testing');
 
       // Test with primary model first
-      let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key.key}`, {
+      let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${PRIMARY_GEMINI_MODEL}:generateContent?key=${key.key}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -300,7 +316,7 @@ export class GeminiKeyManager {
       // If primary model fails with 404, try fallback model
       if (response.status === 404) {
         console.log('Primary model not found, trying fallback model...');
-        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${key.key}`, {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${FALLBACK_GEMINI_MODEL}:generateContent?key=${key.key}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -387,24 +403,27 @@ export class GeminiKeyManager {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
       const currentTime = new Date().toISOString();
 
-      // Network or other error
+      const connectionIssue = /Failed to fetch|NetworkError|TypeError/.test(errorMessage);
+      const formattedMessage = connectionIssue
+        ? 'İnternet bağlantısı sorunu: ' + errorMessage
+        : 'Test sırasında hata: ' + errorMessage;
+
       this.updateKeyStatus(keyId, {
-        isActive: false,
-        status: 'failed',
         lastTested: currentTime,
         testResult: 'failed',
-        errorMessage: 'İnternet bağlantısı sorunu: ' + errorMessage
+        errorMessage: formattedMessage,
+        ...(connectionIssue ? {} : { isActive: false, status: 'failed' }),
       });
 
       this.setKeyTestStatus(keyId, 'failed');
-      return { success: false, error: 'İnternet bağlantısı sorunu: ' + errorMessage };
+      return { success: false, error: formattedMessage };
     }
   }
 
   // Test a key (legacy method for backward compatibility)
   async testKey(key: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${PRIMARY_GEMINI_MODEL}:generateContent?key=${key}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

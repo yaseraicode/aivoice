@@ -59,7 +59,7 @@ npm run build
 
 ```env
 REACT_APP_GEMINI_API_KEY=your_gemini_api_key_here
-REACT_APP_GEMINI_MODEL=gemini-pro
+REACT_APP_GEMINI_MODEL=gemini-2.5-flash-preview-09-2025
 REACT_APP_API_RATE_LIMIT=60
 ```
 

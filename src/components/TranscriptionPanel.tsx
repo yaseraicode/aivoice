@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Sparkles, GitCompare, Copy, Download, RefreshCw, Play, Pause, Volume2 } from 'lucide-react';
 import { GeminiKeyManager } from '../services/GeminiKeyManager';
 
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash-preview-09-2025';
+
 export interface AIImprovement {
   original: string;
   improved: string;
@@ -221,7 +223,7 @@ Sistem: Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli 
       // Convert audio blob to base64
       const base64Audio = await blobToBase64(audioBlob);
       
-      const model = 'gemini-2.0-flash-exp'; // Default model
+      const model = GEMINI_DEFAULT_MODEL;
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
       
       console.log('Gemini Audio Transcription Request:', {
@@ -403,7 +405,7 @@ ${rawTranscription}`
     try {
       setIsImproving(true);
       
-      const model = 'gemini-2.0-flash-exp'; // Default model
+      const model = GEMINI_DEFAULT_MODEL;
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
       
       console.log('Gemini API Request:', {
