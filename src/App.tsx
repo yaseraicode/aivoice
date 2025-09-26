@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AIImprovement } from './components/TranscriptionPanel';
 import AudioRecorder from './components/AudioRecorder';
 import TranscriptionPanel from './components/TranscriptionPanel';
@@ -6,6 +6,21 @@ import RecordingHistory from './components/RecordingHistory';
 import PDFExport from './components/PDFExport';
 import SettingsPage from './components/SettingsPage';
 import { Mic, FileText, History, Download, Settings } from 'lucide-react';
+
+type StoredRecording = {
+  id: string;
+  title: string;
+  timestamp: string;
+  duration: number;
+  rawTranscript: string;
+  geminiTranscript: string;
+  processedTranscript: string;
+  aiImprovedTranscript: string;
+  quality: string;
+  audioData: string | null;
+  audioType: string;
+  speakerCount: number;
+} & Record<string, unknown>;
 
 function App() {
   const [activeTab, setActiveTab] = useState('record');
@@ -18,11 +33,99 @@ function App() {
   const [realtimeText, setRealtimeText] = useState('');
   const [geminiTranscription, setGeminiTranscription] = useState('');
   const [aiImprovement, setAiImprovement] = useState<AIImprovement | null>(null);
-  const [recordings, setRecordings] = useState<any[]>(() => {
+  const [recordings, setRecordings] = useState<StoredRecording[]>(() => {
     const saved = localStorage.getItem('voicescript-recordings');
-    return saved ? JSON.parse(saved) : [];
+    return saved ? (JSON.parse(saved) as StoredRecording[]) : [];
   });
   const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
+  const currentRecordingIdRef = useRef<string | null>(null);
+  const isSavingRecordingRef = useRef(false);
+
+  useEffect(() => {
+    currentRecordingIdRef.current = currentRecordingId;
+  }, [currentRecordingId]);
+
+  useEffect(() => {
+    if (isRecording) {
+      setGeminiTranscription('');
+      setProcessedTranscript('');
+      setAiImprovedTranscript('');
+      setAiImprovement(null);
+      setCurrentRecordingId(null);
+      currentRecordingIdRef.current = null;
+    }
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (isRecording) {
+      return;
+    }
+
+    const activeRecordingId = currentRecordingIdRef.current;
+    const trimmedTranscript = transcript.trim();
+
+    if (!activeRecordingId || !trimmedTranscript) {
+      return;
+    }
+
+    setRecordings((prevRecordings) => {
+      if (prevRecordings.length === 0) {
+        return prevRecordings;
+      }
+
+      const nextRecordings = prevRecordings.map((recording) => {
+        if (recording.id !== activeRecordingId) {
+          return recording;
+        }
+
+        if (recording.rawTranscript === trimmedTranscript) {
+          return recording;
+        }
+
+        return {
+          ...recording,
+          rawTranscript: trimmedTranscript,
+        };
+      });
+
+      return persistRecordings(nextRecordings);
+    });
+  }, [isRecording, transcript]);
+
+  const persistRecordings = (records: StoredRecording[]): StoredRecording[] => {
+    try {
+      localStorage.setItem('voicescript-recordings', JSON.stringify(records));
+      console.log('Kayıtlar yerel depoya yazıldı. Toplam kayıt sayısı:', records.length);
+      return records;
+    } catch (error) {
+      console.warn('localStorage yazılırken kota aşıldı, son 5 kayıt tutuluyor...', error);
+
+      const recentRecordings = records.slice(-5);
+
+      try {
+        localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
+        console.log('Kota temizliği sonrası 5 kayıt saklandı. Kayıt sayısı:', recentRecordings.length);
+        return recentRecordings;
+      } catch (secondError) {
+        console.error('localStorage hala kaydedilemiyor, yalnızca son kayıt saklanacak:', secondError);
+
+        const currentRecording = records[records.length - 1];
+        if (currentRecording) {
+          try {
+            localStorage.setItem('voicescript-recordings', JSON.stringify([currentRecording]));
+            console.log('Sadece mevcut kayıt saklandı. ID:', currentRecording.id);
+            return [currentRecording];
+          } catch (thirdError) {
+            console.error('Tek kaydı saklama denemesi başarısız oldu:', thirdError);
+          }
+        }
+
+        localStorage.removeItem('voicescript-recordings');
+        console.log('Kayıtlar yerel depodan temizlendi.');
+        return [];
+      }
+    }
+  };
 
   // Update legacy state when aiImprovement changes
   useEffect(() => {
@@ -32,30 +135,41 @@ function App() {
     }
   }, [aiImprovement]);
 
-  const saveCurrentRecording = (audioBlob?: Blob, transcriptText?: string) => {
+  const saveCurrentRecording = async (audioBlob?: Blob, transcriptText?: string) => {
+    if (isSavingRecordingRef.current) {
+      console.log('saveCurrentRecording skipped: previous save still in progress');
+      return;
+    }
+
+    isSavingRecordingRef.current = true;
+
     const currentAudio = audioBlob || recordedAudio;
-    const currentTranscript = transcriptText || transcript;
-    
+    const transcriptCandidates = [transcriptText, transcript, realtimeText];
+    const currentTranscript = transcriptCandidates.find(
+      (text): text is string => Boolean(text && text.trim().length > 0)
+    ) ?? '';
+
     if (!currentTranscript && !geminiTranscription && !currentAudio) {
       console.log('Kayıt kaydedilmedi: Transkript boş');
+      isSavingRecordingRef.current = false;
       return;
     }
 
     try {
-      // Convert audio blob to base64 for storage
-      const saveRecordingData = async () => {
-        let audioBase64 = null;
-        if (currentAudio) {
-          try {
-            audioBase64 = await blobToBase64(currentAudio);
-          } catch (error) {
-            console.warn('Ses dosyası base64\'e çevrilemedi:', error);
-          }
+      let audioBase64: string | null = null;
+      if (currentAudio) {
+        try {
+          audioBase64 = await blobToBase64(currentAudio);
+        } catch (error) {
+          console.warn('Ses dosyası base64\'e çevrilemedi:', error);
         }
+      }
 
-        const newRecordingId = Date.now().toString();
-        const recordingData = {
-          id: newRecordingId,
+      setRecordings((prevRecordings) => {
+        const existingId = currentRecordingIdRef.current;
+        const recordingId = existingId ?? Date.now().toString();
+        const recordingData: StoredRecording = {
+          id: recordingId,
           title: `Kayıt - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`,
           timestamp: new Date().toISOString(),
           duration: recordingTime,
@@ -69,53 +183,50 @@ function App() {
           speakerCount: 1
         };
 
-        console.log('Kayıt kaydediliyor:', {
-          ...recordingData,
-          audioData: audioBase64 ? `${audioBase64.length} karakter` : 'yok'
+        const existingIndex = existingId
+          ? prevRecordings.findIndex((recording) => recording.id === existingId)
+          : -1;
+
+        if (existingIndex === -1) {
+          console.log('Yeni kayıt ekleniyor:', {
+            id: recordingData.id,
+            audioData: recordingData.audioData ? `${recordingData.audioData.length} karakter` : 'yok',
+          });
+
+          setCurrentRecordingId(recordingData.id);
+          currentRecordingIdRef.current = recordingData.id;
+          return persistRecordings([...prevRecordings, recordingData]);
+        }
+
+        console.log('Mevcut kayıt güncelleniyor:', {
+          id: recordingData.id,
+          audioLength: recordingTime,
+          transcriptLength: recordingData.rawTranscript.length,
         });
 
-        const updatedRecordings = [...recordings, recordingData];
-        setRecordings(updatedRecordings);
-
-        // Yeni kaydın ID'sini aktif kayıt olarak ayarla
-        setCurrentRecordingId(newRecordingId);
-
-        // Try to save to localStorage with error handling
-        try {
-          localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
-          console.log('Kayıt başarıyla kaydedildi. Toplam kayıt sayısı:', updatedRecordings.length);
-        } catch (error) {
-          console.warn('localStorage quota exceeded during save, cleaning up...');
-
-          // If quota exceeded, keep only the most recent 5 recordings
-          const recentRecordings = updatedRecordings.slice(0, 5);
-          setRecordings(recentRecordings);
-
-          try {
-            localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
-            console.log('Cleaned up recordings during save, kept only the 5 most recent ones');
-          } catch (secondError) {
-            console.error('Still unable to save to localStorage during save operation:', secondError);
-            // Clear all except current
-            const currentRecording = updatedRecordings[updatedRecordings.length - 1];
-            if (currentRecording) {
-              setRecordings([currentRecording]);
-              try {
-                localStorage.setItem('voicescript-recordings', JSON.stringify([currentRecording]));
-                console.log('Kept only the current recording during save operation');
-              } catch (thirdError) {
-                console.error('Unable to save even current recording:', thirdError);
-                localStorage.removeItem('voicescript-recordings');
-                setRecordings([]);
-              }
-            }
+        const updatedRecordings = prevRecordings.map((recording, index) => {
+          if (index !== existingIndex) {
+            return recording;
           }
-        }
-      };
 
-      saveRecordingData();
+          return {
+            ...recording,
+            duration: recordingTime,
+            rawTranscript: currentTranscript,
+            geminiTranscript: geminiTranscription,
+            processedTranscript: processedTranscript,
+            aiImprovedTranscript: aiImprovedTranscript,
+            audioData: audioBase64,
+            audioType: currentAudio?.type || recording.audioType,
+          };
+        });
+
+        return persistRecordings(updatedRecordings);
+      });
     } catch (error) {
       console.error('Kayıt kaydetme hatası:', error);
+    } finally {
+      isSavingRecordingRef.current = false;
     }
   };
 
@@ -218,85 +329,32 @@ function App() {
     console.log('Current recording ID before save:', currentRecordingId);
 
     // Otomatik kaydetme - kayıt tamamlandığında
-    saveCurrentRecording(audioBlob, finalText);
+    void saveCurrentRecording(audioBlob, finalText);
   };
 
   const handleDeleteRecording = (id: string) => {
-    const updatedRecordings = recordings.filter(recording => recording.id !== id);
-    setRecordings(updatedRecordings);
-
-    try {
-      localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
-    } catch (error) {
-      console.warn('localStorage quota exceeded during delete operation:', error);
-      // If quota exceeded during delete, try to save with cleanup
-      try {
-        const recentRecordings = updatedRecordings.slice(0, 5);
-        setRecordings(recentRecordings);
-        localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
-        console.log('Cleaned up recordings during delete operation');
-      } catch (secondError) {
-        console.error('Unable to save after cleanup during delete:', secondError);
-        localStorage.removeItem('voicescript-recordings');
-        setRecordings([]);
-      }
-    }
+    setRecordings((prevRecordings) => persistRecordings(prevRecordings.filter(recording => recording.id !== id)));
   };
 
-  const handleUpdateRecording = (id: string, updates: unknown) => {
-    let updatedRecordings;
-
-    if (!id && recordings.length > 0) {
-      // If no ID provided, update the most recent recording
-      const mostRecentRecording = recordings[0];
-      updatedRecordings = recordings.map(recording =>
-        recording.id === mostRecentRecording.id
-          ? { ...recording, ...(updates as Record<string, unknown>) }
-          : recording
-      );
-    } else {
-      // Update specific recording by ID
-      updatedRecordings = recordings.map(recording => {
-        const rec = recording as Record<string, unknown>;
-        return (rec.id === id) ? { ...rec, ...(updates as Record<string, unknown>) } : rec;
-      });
-    }
-
-    setRecordings(updatedRecordings);
-
-    // Try to save to localStorage with error handling
-    try {
-      localStorage.setItem('voicescript-recordings', JSON.stringify(updatedRecordings));
-    } catch (error) {
-      console.warn('localStorage quota exceeded, cleaning up old recordings...');
-
-      // If quota exceeded, keep only the most recent 5 recordings
-      const recentRecordings = updatedRecordings.slice(0, 5);
-      setRecordings(recentRecordings);
-
-      try {
-        localStorage.setItem('voicescript-recordings', JSON.stringify(recentRecordings));
-        console.log('Cleaned up recordings, kept only the 5 most recent ones');
-      } catch (secondError) {
-        console.error('Still unable to save to localStorage:', secondError);
-        // If still failing, clear all recordings except the current one
-        const currentRecording = updatedRecordings[0];
-        if (currentRecording) {
-          const minimalRecordings = [currentRecording];
-          setRecordings(minimalRecordings);
-          try {
-            localStorage.setItem('voicescript-recordings', JSON.stringify(minimalRecordings));
-            console.log('Kept only the current recording due to storage limitations');
-          } catch (thirdError) {
-            console.error('Critical: Unable to save even minimal data to localStorage:', thirdError);
-            // Last resort: clear localStorage completely
-            localStorage.removeItem('voicescript-recordings');
-            setRecordings([]);
-            console.log('Cleared all recordings from localStorage due to quota issues');
-          }
-        }
+  const handleUpdateRecording = (id: string, updates: Partial<StoredRecording>) => {
+    setRecordings((prevRecordings) => {
+      if (prevRecordings.length === 0) {
+        return prevRecordings;
       }
-    }
+
+      const fallbackId = currentRecordingIdRef.current;
+      const targetId = id || fallbackId;
+
+      if (!targetId) {
+        return prevRecordings;
+      }
+
+      const updatedRecordings = prevRecordings.map((recording) =>
+        recording.id === targetId ? { ...recording, ...updates } : recording
+      );
+
+      return persistRecordings(updatedRecordings);
+    });
   };
 
   const tabs = [
@@ -423,7 +481,9 @@ function App() {
                   recordedAudio={recordedAudio}
                   isRecording={isRecording}
                   currentRecordingId={currentRecordingId}
-                  onSaveRecording={() => saveCurrentRecording()}
+                  onSaveRecording={() => {
+                    void saveCurrentRecording();
+                  }}
                   onUpdateRecording={handleUpdateRecording}
                 />
               )}
