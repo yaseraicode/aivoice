@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Sparkles, GitCompare, Copy, Download, RefreshCw, Play, Pause, Volume2, UserCircle, Edit3, Eye } from 'lucide-react';
 import { GeminiKeyManager } from '../services/GeminiKeyManager';
 
-const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash-preview-09-2025';
-
 export interface AIImprovement {
   original: string;
   improved: string;
@@ -339,15 +337,6 @@ Sistem: Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli 
       // Convert audio blob to base64
       const base64Audio = await blobToBase64(audioBlob);
       
-      const model = GEMINI_DEFAULT_MODEL;
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-      
-      console.log('Gemini Audio Transcription Request:', {
-        model,
-        audioSize: audioBlob.size,
-        audioType: audioBlob.type
-      });
-      
       const requestBody = {
         contents: [
           {
@@ -377,24 +366,52 @@ Zaman bilgisini kaydın gerçek başlangıç anına göre hesapla (örneğin kon
         }
       };
       
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody)
-      });
+      const performRequest = (targetModel: string) => {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
+        console.log('Gemini Audio Transcription Request:', {
+          model: targetModel,
+          audioSize: audioBlob.size,
+          audioType: audioBlob.type
+        });
 
-      console.log('Gemini Audio API Response Status:', response.status);
+        return fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody)
+        });
+      };
+
+      let modelInUse = keyManager.getActiveModel();
+      let response = await performRequest(modelInUse);
+
+      if (response.status === 404) {
+        const fallbackModel = keyManager.getFallbackModel();
+
+        if (fallbackModel && fallbackModel !== modelInUse) {
+          console.warn(`Primary Gemini model \"${modelInUse}\" not found. Trying fallback model \"${fallbackModel}\".`);
+          const fallbackResponse = await performRequest(fallbackModel);
+
+          if (fallbackResponse.ok) {
+            response = fallbackResponse;
+            modelInUse = fallbackModel;
+          } else {
+            const fallbackErrorText = await fallbackResponse.text();
+            console.error(`Gemini Audio Fallback Error (${fallbackModel}):`, fallbackErrorText);
+            throw new Error(`Gemini API fallback error (${fallbackModel}): ${fallbackResponse.status} - ${fallbackErrorText}`);
+          }
+        }
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Gemini Audio API Error:', errorText);
-        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+        console.error(`Gemini Audio API Error (${modelInUse}):`, errorText);
+        throw new Error(`Gemini API error (${modelInUse}): ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      console.log('Gemini Audio API Response:', data);
+      console.log(`Gemini Audio API Response (${modelInUse}):`, data);
       
       const transcribedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
@@ -599,15 +616,6 @@ ${rawTranscription}`
     try {
       setIsImproving(true);
       
-      const model = GEMINI_DEFAULT_MODEL;
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-      
-      console.log('Gemini API Request:', {
-        model,
-        apiUrl: apiUrl.replace(GEMINI_API_KEY, '[HIDDEN]'),
-        promptLength: prompts[type].length
-      });
-      
       const requestBody = {
         contents: [
           {
@@ -640,24 +648,55 @@ ${rawTranscription}`
         ]
       };
       
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody)
-      });
+      const performRequest = (targetModel: string) => {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
+        console.log('Gemini API Request:', {
+          model: targetModel,
+          apiUrl: apiUrl.replace(GEMINI_API_KEY, '[HIDDEN]'),
+          promptLength: prompts[type].length
+        });
 
-      console.log('Gemini API Response Status:', response.status);
+        return fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody)
+        });
+      };
+
+      let modelInUse = keyManager.getActiveModel();
+      let response = await performRequest(modelInUse);
+
+      if (response.status === 404) {
+        const fallbackModel = keyManager.getFallbackModel();
+
+        if (fallbackModel && fallbackModel !== modelInUse) {
+          console.warn(`Primary Gemini model \"${modelInUse}\" not found. Trying fallback model \"${fallbackModel}\".`);
+          const fallbackResponse = await performRequest(fallbackModel);
+
+          if (fallbackResponse.ok) {
+            response = fallbackResponse;
+            modelInUse = fallbackModel;
+          } else {
+            const fallbackErrorText = await fallbackResponse.text();
+            console.error(`Gemini API Fallback Error (${fallbackModel}):`, fallbackErrorText);
+            throw new Error(`Gemini API fallback error (${fallbackModel}): ${fallbackResponse.status} - ${fallbackErrorText}`);
+          }
+        }
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Gemini API Error Response:', errorText);
-        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+        console.error(`Gemini API Error Response (${modelInUse}):`, errorText);
+        throw new Error(`Gemini API error (${modelInUse}): ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      console.log('Gemini API Response Data:', data);
+      console.log('Gemini API Response Data:', {
+        model: modelInUse,
+        response: data
+      });
       
       const improvedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 

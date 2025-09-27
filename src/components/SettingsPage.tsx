@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info, Save } from 'lucide-react';
-import { GeminiKeyManager, GeminiKey } from '../services/GeminiKeyManager';
+import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info, Save, RefreshCw } from 'lucide-react';
+import { GeminiKeyManager, GeminiKey, DEFAULT_GEMINI_MODEL } from '../services/GeminiKeyManager';
 
 const SettingsPage: React.FC = () => {
   const [keys, setKeys] = useState<GeminiKey[]>([]);
@@ -13,6 +13,11 @@ const SettingsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   const [keyManager] = useState(() => GeminiKeyManager.getInstance());
+  const [currentModel, setCurrentModel] = useState(() => keyManager.getActiveModel());
+  const [modelInput, setModelInput] = useState(() => keyManager.getActiveModel());
+  const [isModelDirty, setIsModelDirty] = useState(false);
+  const [isSavingModel, setIsSavingModel] = useState(false);
+  const fallbackModel = keyManager.getFallbackModel();
 
   useEffect(() => {
     loadKeys();
@@ -20,11 +25,52 @@ const SettingsPage: React.FC = () => {
 
   const loadKeys = () => {
     setKeys(keyManager.getAllKeys());
+    const activeModel = keyManager.getActiveModel();
+    setCurrentModel(activeModel);
+    setModelInput((prev) => (isModelDirty ? prev : activeModel));
   };
 
   const showNotification = (type: 'success' | 'error' | 'warning', message: string) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 5000);
+  };
+
+  const handleModelInputChange = (value: string) => {
+    setModelInput(value);
+    setIsModelDirty(value.trim() !== currentModel.trim());
+  };
+
+  const handleResetModelInput = () => {
+    setModelInput(currentModel);
+    setIsModelDirty(false);
+  };
+
+  const handleSaveModel = () => {
+    const trimmedModel = modelInput.trim();
+
+    if (!trimmedModel) {
+      showNotification('error', 'Model adı boş olamaz.');
+      return;
+    }
+
+    if (trimmedModel === currentModel.trim()) {
+      showNotification('warning', 'Model zaten kullanılmakta.');
+      return;
+    }
+
+    setIsSavingModel(true);
+    try {
+      keyManager.setActiveModel(trimmedModel);
+      setCurrentModel(trimmedModel);
+      setModelInput(trimmedModel);
+      setIsModelDirty(false);
+      showNotification('success', 'Gemini modeli güncellendi.');
+    } catch (error) {
+      console.error('Gemini modelini kaydetme hatası:', error);
+      showNotification('error', 'Model kaydedilirken beklenmeyen bir hata oluştu.');
+    } finally {
+      setIsSavingModel(false);
+    }
   };
 
   const handleAddKey = () => {
@@ -179,6 +225,66 @@ const SettingsPage: React.FC = () => {
                 Anahtarlar round-robin mantığıyla otomatik olarak döndürülür.
                 Hatalı anahtarlar otomatik olarak devre dışı bırakılır.
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Gemini Model Configuration */}
+        <div className="mb-6 bg-gradient-to-r from-blue-50 to-white border border-blue-200 rounded-lg p-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold text-gray-800">Gemini Model Ayarı</h3>
+              <p className="text-sm text-gray-600">
+                Aktif model:
+                <span className="ml-1 font-semibold text-blue-600">{currentModel}</span>
+              </p>
+              <p className="text-xs text-gray-500">
+                Önerilen varsayılan model: {DEFAULT_GEMINI_MODEL}. Gerekirse sistem otomatik olarak <span className="font-semibold text-gray-700">{fallbackModel}</span> modeline düşer.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 md:w-1/2">
+              <label className="text-xs font-medium text-gray-600" htmlFor="gemini-model-input">
+                Yeni model adı
+              </label>
+              <input
+                id="gemini-model-input"
+                type="text"
+                value={modelInput}
+                onChange={(e) => handleModelInputChange(e.target.value)}
+                placeholder={DEFAULT_GEMINI_MODEL}
+                className="w-full px-3 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveModel}
+                  disabled={!isModelDirty || isSavingModel}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
+                    !isModelDirty || isSavingModel
+                      ? 'bg-blue-300 text-white cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                >
+                  {isSavingModel ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  {isSavingModel ? 'Kaydediliyor...' : 'Modeli Kaydet'}
+                </button>
+                <button
+                  onClick={handleResetModelInput}
+                  disabled={!isModelDirty || isSavingModel}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
+                    !isModelDirty || isSavingModel
+                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Sıfırla
+                </button>
+              </div>
             </div>
           </div>
         </div>

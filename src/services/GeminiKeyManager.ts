@@ -17,10 +17,11 @@ export interface GeminiKey {
 export interface KeyStorage {
   geminiKeys: GeminiKey[];
   lastRotated: string;
+  activeModel?: string;
 }
 
-const PRIMARY_GEMINI_MODEL = 'gemini-2.5-flash-preview-09-2025';
-const FALLBACK_GEMINI_MODEL = 'gemini-2.0-flash-exp';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-preview-09-2025';
+const FALLBACK_GEMINI_MODEL = 'gemini-2.5-flash';
 
 export class GeminiKeyManager {
   private static instance: GeminiKeyManager;
@@ -28,6 +29,7 @@ export class GeminiKeyManager {
   private currentKeyIndex = 0;
   private readonly STORAGE_KEY = 'gemini-api-keys';
   private readonly ENCRYPTION_KEY = 'voice-script-encryption-key';
+  private primaryModel = DEFAULT_GEMINI_MODEL;
 
   private constructor() {
     this.loadKeys();
@@ -52,6 +54,7 @@ export class GeminiKeyManager {
           status: key.status || (key.isActive ? 'active' : 'passive') // Eski veriler için geriye uyumluluk
         }));
         this.currentKeyIndex = data.lastRotated ? this.getNextActiveKeyIndex() : 0;
+        this.primaryModel = data.activeModel?.trim() || DEFAULT_GEMINI_MODEL;
       }
     } catch (error) {
       console.error('Error loading keys from localStorage:', error);
@@ -67,7 +70,8 @@ export class GeminiKeyManager {
           ...key,
           key: this.encrypt(key.key)
         })),
-        lastRotated: new Date().toISOString()
+        lastRotated: new Date().toISOString(),
+        activeModel: this.primaryModel
       };
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
     } catch (error) {
@@ -198,6 +202,25 @@ export class GeminiKeyManager {
     return this.keys.some(key => key.isActive);
   }
 
+  getActiveModel(): string {
+    return this.primaryModel || DEFAULT_GEMINI_MODEL;
+  }
+
+  setActiveModel(model: string): void {
+    const sanitized = model.trim() || DEFAULT_GEMINI_MODEL;
+
+    if (sanitized === this.primaryModel) {
+      return;
+    }
+
+    this.primaryModel = sanitized;
+    this.saveKeys();
+  }
+
+  getFallbackModel(): string {
+    return FALLBACK_GEMINI_MODEL;
+  }
+
   // Edit a key with validation
   editKey(id: string, name: string, apiKey: string): { success: boolean; error?: string } {
     // Validation
@@ -294,8 +317,10 @@ export class GeminiKeyManager {
       // Set loading state
       this.setKeyTestStatus(keyId, 'testing');
 
+      const primaryModel = this.getActiveModel();
+
       // Test with primary model first
-      let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${PRIMARY_GEMINI_MODEL}:generateContent?key=${key.key}`, {
+      let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${primaryModel}:generateContent?key=${key.key}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -315,8 +340,9 @@ export class GeminiKeyManager {
 
       // If primary model fails with 404, try fallback model
       if (response.status === 404) {
-        console.log('Primary model not found, trying fallback model...');
-        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${FALLBACK_GEMINI_MODEL}:generateContent?key=${key.key}`, {
+        const fallbackModel = this.getFallbackModel();
+        console.log(`Primary model "${primaryModel}" not found, trying fallback model "${fallbackModel}"...`);
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${fallbackModel}:generateContent?key=${key.key}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -423,7 +449,8 @@ export class GeminiKeyManager {
   // Test a key (legacy method for backward compatibility)
   async testKey(key: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${PRIMARY_GEMINI_MODEL}:generateContent?key=${key}`, {
+      const primaryModel = this.getActiveModel();
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${primaryModel}:generateContent?key=${key}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
