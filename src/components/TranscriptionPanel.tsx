@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FileText, Sparkles, GitCompare, Copy, Download, RefreshCw, Play, Pause, Volume2 } from 'lucide-react';
+import { FileText, Sparkles, GitCompare, Copy, Download, RefreshCw, Play, Pause, Volume2, UserCircle, Edit3, Eye } from 'lucide-react';
 import { GeminiKeyManager } from '../services/GeminiKeyManager';
 
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash-preview-09-2025';
@@ -44,12 +44,12 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   const [activeTab, setActiveTab] = useState<'realtime' | 'gemini' | 'ai' | 'comparison'>('realtime');
   const [isImproving, setIsImproving] = useState(false);
   const [improvementType, setImprovementType] = useState<'fast' | 'detailed' | 'summary'>('detailed');
-  const [editableText, setEditableText] = useState('');
   const [isGeminiTranscribing, setIsGeminiTranscribing] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [isAiEditMode, setIsAiEditMode] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const currentAudioUrlRef = useRef<string | null>(null);
   const latestDurationRef = useRef(0);
@@ -57,10 +57,6 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   const realtimeTextRef = useRef<HTMLTextAreaElement>(null);
   const aiTextRef = useRef<HTMLTextAreaElement>(null);
   const geminiTextRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    setEditableText(transcript);
-  }, [transcript]);
 
   // Cleanup audio resources on unmount
   useEffect(() => {
@@ -81,6 +77,12 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     const candidate = audioDuration > 0 ? audioDuration : (recordingDuration ?? 0);
     latestDurationRef.current = candidate;
   }, [audioDuration, recordingDuration]);
+
+  useEffect(() => {
+    if (aiImprovement) {
+      setIsAiEditMode(false);
+    }
+  }, [aiImprovement?.timestamp]);
 
   // Preload metadata when audio blob changes for accurate duration display
   useEffect(() => {
@@ -471,17 +473,81 @@ Sistem: Ses dosyası boyutu ${(audioBlob.size / 1024).toFixed(2)} KB, format: ${
     });
   };
 
+  const compressConsecutiveSpeakers = (text: string): string => {
+    const lines = text.split('\n');
+    const result: string[] = [];
+    let lastSpeaker: string | null = null;
+
+    lines.forEach((originalLine) => {
+      const trimmed = originalLine.trim();
+
+      if (!trimmed) {
+        result.push('');
+        lastSpeaker = null;
+        return;
+      }
+
+      const speakerMatch = trimmed.match(/^(?:👤\s*)?Konuşmacı\s*(\d+)(?:\s*\[([^\]]*)\])?:\s*(.*)$/i);
+      if (speakerMatch) {
+        const speakerId = speakerMatch[1];
+        const timeRaw = speakerMatch[2]?.trim();
+        const content = speakerMatch[3].trim();
+
+        if (lastSpeaker === speakerId) {
+          const parts = [];
+          if (timeRaw) {
+            parts.push(`[${timeRaw}]`);
+          }
+          if (content) {
+            parts.push(content);
+          }
+          const bulletLine = parts.length > 0 ? `  • ${parts.join(' ')}` : '';
+          result.push(bulletLine);
+        } else {
+          lastSpeaker = speakerId;
+          const timeSegment = timeRaw ? ` [${timeRaw}]` : '';
+          const prefix = `👤 Konuşmacı ${speakerId}${timeSegment}:`;
+          const line = content ? `${prefix} ${content}` : prefix;
+          result.push(line.trim());
+        }
+        return;
+      }
+
+      if (/^📋/.test(trimmed) || /^#{1,3}\s/.test(trimmed)) {
+        lastSpeaker = null;
+      }
+
+      const continuationMatch = trimmed.match(/^\[(\d{1,2}:\d{2})\]\s*(.*)$/);
+      if (continuationMatch && lastSpeaker) {
+        const timeSegment = continuationMatch[1];
+        const content = continuationMatch[2].trim();
+        const bulletLine = `  • [${timeSegment}]${content ? ` ${content}` : ''}`;
+        result.push(bulletLine);
+        return;
+      }
+
+      result.push(originalLine);
+    });
+
+    return result
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\s*•\s*$/gm, '')
+      .trimEnd();
+  };
+
   const normalizeGeminiTimestamps = (text: string): string => {
     if (!text) {
       return text;
     }
 
-    // Convert dot-separated timestamps (e.g., 00.05) to colon format for consistency
-    return text.replace(/\[(\d{1,2})\.(\d{2})\]/g, (_match, minutes: string, seconds: string) => {
+    const withNormalizedTimes = text.replace(/\[(\d{1,2})\.(\d{2})\]/g, (_match, minutes: string, seconds: string) => {
       const safeMinutes = minutes.padStart(2, '0');
       const safeSeconds = seconds.padStart(2, '0');
       return `[${safeMinutes}:${safeSeconds}]`;
     });
+
+    return compressConsecutiveSpeakers(withNormalizedTimes);
   };
 
   // Gemini API Integration - Text Improvement with Key Rotation
@@ -600,9 +666,11 @@ ${rawTranscription}`
         throw new Error('Gemini\'den metin alınamadı. Yanıt yapısı beklenenden farklı.');
       }
 
+      const cleanedImprovement = normalizeGeminiTimestamps(improvedText);
+
       const improvement: AIImprovement = {
         original: rawTranscription,
-        improved: improvedText,
+        improved: cleanedImprovement,
         improvementType: type,
         timestamp: new Date()
       };
@@ -613,8 +681,8 @@ ${rawTranscription}`
       // Update recording with AI improvement
       if (onUpdateRecording) {
         onUpdateRecording(currentRecordingId || '', {
-          aiImprovedTranscript: improvedText,
-          processedTranscript: improvedText
+          aiImprovedTranscript: cleanedImprovement,
+          processedTranscript: cleanedImprovement
         });
       }
 
@@ -670,7 +738,7 @@ ${rawTranscription}`
         break;
     }
 
-    return improved;
+    return normalizeGeminiTimestamps(improved);
   };
 
   const formatDetailedTranscription = (text: string): string => {
@@ -770,6 +838,186 @@ ${rawTranscription}`
     summary.push(`• Oluşturulma: ${new Date().toLocaleString('tr-TR')}`);
 
     return summary.join('\n');
+  };
+
+  type AiPreviewNode =
+    | { type: 'heading'; title: string; detail?: string }
+    | { type: 'bullet'; items: string[] }
+    | { type: 'speaker'; speaker: string; time?: string; content: string }
+    | { type: 'paragraph'; content: string };
+
+  const renderAiImprovedPreview = (text: string) => {
+    const sanitizedText = compressConsecutiveSpeakers(text)
+      .replace(/\r\n/g, '\n')
+      .replace(/\*\*\*(.*?)\*\*\*/g, '$1')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/__(.*?)__/g, '$1')
+      .replace(/`{1,3}(.*?)`{1,3}/g, '$1');
+
+    const lines = sanitizedText.split('\n');
+    const nodes: AiPreviewNode[] = [];
+    let bulletBuffer: string[] = [];
+
+    const flushBullets = () => {
+      if (bulletBuffer.length > 0) {
+        nodes.push({ type: 'bullet', items: [...bulletBuffer] });
+        bulletBuffer = [];
+      }
+    };
+
+    lines.forEach((rawLine) => {
+      const line = rawLine.trim();
+      if (!line) {
+        flushBullets();
+        return;
+      }
+
+      if (/^bu\s+transkripsiyon\s+metni/i.test(line)) {
+        flushBullets();
+        return;
+      }
+
+      if (/^[-*•]\s+/.test(line)) {
+        bulletBuffer.push(line.replace(/^[-*•]\s*/, '').trim());
+        return;
+      }
+
+      flushBullets();
+
+      const markdownHeadingMatch = line.match(/^#{1,3}\s*(.*)$/);
+      if (markdownHeadingMatch) {
+        const title = markdownHeadingMatch[1].trim();
+        if (title) {
+          nodes.push({ type: 'heading', title });
+        }
+        return;
+      }
+
+      if (line.startsWith('📋')) {
+        const cleaned = line.replace(/^📋\s*/, '').trim();
+        const [rawTitle, ...rest] = cleaned.split(':');
+        const title = (rest.length > 0 ? rest.join(':') : rawTitle).trim();
+        const descriptor = rest.length > 0 ? rawTitle.trim() : undefined;
+        nodes.push({ type: 'heading', title, detail: descriptor });
+        return;
+      }
+
+      if (line.startsWith('👤')) {
+        const match = line.match(/^👤\s*(.*?)\s*\[([^\]]*)\]:\s*(.*)$/);
+        if (match) {
+          const [, speakerRaw, timeRaw, contentRaw] = match;
+          nodes.push({
+            type: 'speaker',
+            speaker: speakerRaw.trim() || 'Konuşmacı',
+            time: timeRaw.trim() || undefined,
+            content: contentRaw.trim()
+          });
+          return;
+        }
+
+        nodes.push({
+          type: 'speaker',
+          speaker: 'Konuşmacı',
+          content: line.replace(/^👤\s*/, '').trim()
+        });
+        return;
+      }
+
+      const fallbackSpeakerMatch = line.match(/^(Konuşmacı\s*\d+)\s*\[([^\]]*)\]:\s*(.*)$/i);
+      if (fallbackSpeakerMatch) {
+        const [, label, timeRaw, contentRaw] = fallbackSpeakerMatch;
+        nodes.push({
+          type: 'speaker',
+          speaker: label.trim(),
+          time: timeRaw.trim() || undefined,
+          content: contentRaw.trim()
+        });
+        return;
+      }
+
+      nodes.push({ type: 'paragraph', content: line });
+    });
+
+    flushBullets();
+
+    if (nodes.length === 0) {
+      return (
+        <p className="text-sm text-gray-500">AI iyileştirmesi henüz boş görünüyor.</p>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        {nodes.map((node, index) => {
+          if (node.type === 'heading') {
+            return (
+              <div
+                key={`ai-heading-${index}`}
+                className="rounded-xl border-l-4 border-blue-500 bg-white/90 p-4 shadow-sm"
+              >
+                {node.detail && (
+                  <div className="text-xs uppercase tracking-wider text-blue-500 font-semibold mb-1">
+                    {node.detail}
+                  </div>
+                )}
+                <div className="text-base font-semibold text-gray-800">
+                  {node.title}
+                </div>
+              </div>
+            );
+          }
+
+          if (node.type === 'bullet') {
+            return (
+              <div
+                key={`ai-bullets-${index}`}
+                className="rounded-xl border border-blue-100 bg-blue-50 p-4"
+              >
+                <ul className="space-y-2">
+                  {node.items.map((item, itemIndex) => (
+                    <li key={`ai-bullets-${index}-${itemIndex}`} className="flex items-start gap-3 text-sm text-gray-700">
+                      <span className="mt-1 text-blue-500">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          }
+
+          if (node.type === 'speaker') {
+            return (
+              <div
+                key={`ai-speaker-${index}`}
+                className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-blue-50 p-4 shadow-sm"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-blue-600 font-semibold text-sm">
+                    <UserCircle className="w-4 h-4" />
+                    <span>{node.speaker}</span>
+                  </div>
+                  {node.time && (
+                    <span className="text-xs font-medium text-gray-400">{node.time}</span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-700 leading-relaxed">
+                  {node.content}
+                </p>
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={`ai-paragraph-${index}`}
+              className="rounded-xl border border-gray-200 bg-white/90 p-4 shadow-sm"
+            >
+              <p className="text-sm text-gray-700 leading-relaxed">{node.content}</p>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const copyToClipboard = (text: string) => {
@@ -1063,7 +1311,7 @@ ${rawTranscription}`
               </span>
             </div>
             
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex flex-wrap items-center gap-2 mb-4">
               <button
                 onClick={() => copyToClipboard(aiImprovement.improved)}
                 className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
@@ -1078,15 +1326,33 @@ ${rawTranscription}`
                 <Download className="w-4 h-4" />
                 TXT İndir
               </button>
+              <div className="flex-1" />
+              <button
+                onClick={() => setIsAiEditMode((prev) => !prev)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors border ${
+                  isAiEditMode
+                    ? 'bg-white border-blue-500 text-blue-600 hover:bg-blue-50'
+                    : 'bg-blue-500 border-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                {isAiEditMode ? <Eye className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+                <span>{isAiEditMode ? 'Önizleme' : 'Düzenle'}</span>
+              </button>
             </div>
             
-            <textarea
-              ref={aiTextRef}
-              value={aiImprovement.improved}
-              onChange={(e) => setAiImprovement({...aiImprovement, improved: e.target.value})}
-              className="w-full h-96 p-4 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm leading-relaxed bg-blue-50"
-              style={{ whiteSpace: 'pre-wrap' }}
-            />
+            {isAiEditMode ? (
+              <textarea
+                ref={aiTextRef}
+                value={aiImprovement.improved}
+                onChange={(e) => setAiImprovement({ ...aiImprovement, improved: e.target.value })}
+                className="w-full h-96 p-4 border border-blue-300 rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm leading-relaxed bg-blue-50"
+                style={{ whiteSpace: 'pre-wrap' }}
+              />
+            ) : (
+              <div className="rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-blue-50 p-6 shadow-inner">
+                {renderAiImprovedPreview(aiImprovement.improved)}
+              </div>
+            )}
           </div>
         )}
 
