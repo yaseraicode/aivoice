@@ -34,3 +34,4 @@ _2025-09-27_: Realtime transcript now renders plain text with relative timestamp
 _2025-09-27_: AI iyileştirme sekmesi kart tabanlı önizleme ve düzenleme modu ile yenilendi; Gemini çıktılarında ardışık konuşmacı satırları tek blokta gruplanıyor (`src/components/TranscriptionPanel.tsx`).
 _2025-09-27_: PDF export başlığına konuşma süresi/hızı/ton analizi eklendi, transkripsiyon blokları kart formatında render ediliyor, karşılaştırmalı PDF yeni önizleme panelleri ile geliyor (`src/components/PDFExport.tsx`).
 _2025-09-27_: Gemini modeli Settings üzerinden seçilip kaydediliyor; seçim `GeminiKeyManager` ile saklanıyor ve tüm API akışları yapılandırılan modeli kullanıyor (`src/components/SettingsPage.tsx`, `src/components/TranscriptionPanel.tsx`, `src/services/GeminiKeyManager.ts`).
+_2025-09-27_: Sistem sesi kaydı için rehber ve mikrofon+hoparlör miksleme iyileştirildi; AudioRecorder artık AudioContext kapamalarını yönetiyor (`src/components/AudioRecorder.tsx`).

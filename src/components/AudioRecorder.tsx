@@ -34,6 +34,7 @@ export default function AudioRecorder({
   const [isSupported, setIsSupported] = useState(true);
   const [hasDisplayMediaSupport, setHasDisplayMediaSupport] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSystemGuide, setShowSystemGuide] = useState(false);
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
   const [recordingTimer, setRecordingTimer] = useState<number | null>(null);
   const finalDurationRef = useRef<number>(0);
@@ -43,6 +44,7 @@ export default function AudioRecorder({
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const interimTextRef = useRef<string>('');
   const finalTextRef = useRef<string>('');
 
@@ -66,6 +68,12 @@ export default function AudioRecorder({
     }
 
   }, []);
+
+  useEffect(() => {
+    if ((audioSource === 'system' || audioSource === 'both') && hasDisplayMediaSupport) {
+      setShowSystemGuide(true);
+    }
+  }, [audioSource, hasDisplayMediaSupport]);
 
   const formatElapsedTime = (totalSeconds: number): string => {
     if (!Number.isFinite(totalSeconds)) {
@@ -287,28 +295,23 @@ export default function AudioRecorder({
           
           // Audio context ile sesleri birleştir
           const audioContext = new AudioContext();
-          
-          // Gain node'ları ile ses seviyelerini optimize et
-          const micGain = audioContext.createGain();
-          const systemGain = audioContext.createGain();
-          const merger = audioContext.createChannelMerger(2);
-          
-          // Ses seviyelerini optimize et
-          micGain.gain.value = 0.7;
-          systemGain.gain.value = 1.2;
-          
+          audioContextRef.current = audioContext;
+
+          const destination = audioContext.createMediaStreamDestination();
           const micSource = audioContext.createMediaStreamSource(micStream);
           const systemSource = audioContext.createMediaStreamSource(systemStream);
-          const destination = audioContext.createMediaStreamDestination();
-          
-          // Stereo mixing için channel merger kullan
+          const micGain = audioContext.createGain();
+          const systemGain = audioContext.createGain();
+
+          micGain.gain.value = 0.9;
+          systemGain.gain.value = 1.0;
+
           micSource.connect(micGain);
           systemSource.connect(systemGain);
-          
-          micGain.connect(merger, 0, 0); // Sol kanal
-          systemGain.connect(merger, 0, 1); // Sağ kanal
-          merger.connect(destination);
-          
+
+          micGain.connect(destination);
+          systemGain.connect(destination);
+
           stream = destination.stream;
           break;
           
@@ -321,15 +324,14 @@ export default function AudioRecorder({
       console.error('Audio stream error:', err);
 
       // Hata türüne göre özel mesajlar
+      const isSystemAudioHandledError = err instanceof Error && typeof err.message === 'string' && err.message.startsWith('SYSTEM_AUDIO_');
+
       if (err.name === 'NotAllowedError') {
         setError('Mikrofon/ekran paylaşımı izni verilmedi. Lütfen tarayıcı ayarlarından izinleri etkinleştirin.');
       } else if (err.name === 'NotFoundError') {
         setError('Ses kaynağı bulunamadı. Mikrofon bağlı olduğundan emin olun.');
-      } else {
-        // Eğer error zaten set edilmişse tekrar set etme
-        if (!error) {
-          setError(`Ses kaynağı hatası: ${err.message}`);
-        }
+      } else if (!isSystemAudioHandledError) {
+        setError((prev) => prev ?? `Ses kaynağı hatası: ${err instanceof Error ? err.message : 'Bilinmeyen hata'}`);
       }
 
       throw err;
@@ -345,6 +347,11 @@ export default function AudioRecorder({
       interimTextRef.current = '';
       setRealtimeText('');
       setTranscript(''); // İkinci kayıt için transcript state'ini temizle
+
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => null);
+        audioContextRef.current = null;
+      }
       
       // Get audio stream
       const stream = await getAudioStream();
@@ -377,11 +384,18 @@ export default function AudioRecorder({
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(1000); // 1 saniyede bir chunk
       
+      const shouldUseSpeechRecognition = audioSource !== 'system';
+
       // Setup Speech Recognition for realtime transcription
-      const recognition = setupSpeechRecognition();
-      if (recognition) {
-        recognitionRef.current = recognition;
-        recognition.start();
+      if (shouldUseSpeechRecognition) {
+        const recognition = setupSpeechRecognition();
+        if (recognition) {
+          recognitionRef.current = recognition;
+          recognition.start();
+        }
+      } else {
+        recognitionRef.current = null;
+        setRealtimeText('');
       }
       
       // Start recording timer
@@ -412,6 +426,16 @@ export default function AudioRecorder({
         }
       }
       setIsRecording(false);
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => null);
+        audioContextRef.current = null;
+      }
     }
   };
 
@@ -445,6 +469,11 @@ export default function AudioRecorder({
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
+      }
+
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => null);
+        audioContextRef.current = null;
       }
 
       setIsRecording(false);
@@ -487,6 +516,13 @@ export default function AudioRecorder({
     );
   }
 
+  const handleAudioSourceChange = (source: AudioSource) => {
+    setAudioSource(source);
+    if (source === 'microphone') {
+      setShowSystemGuide(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
         <div className="flex items-center justify-between mb-6">
@@ -500,7 +536,7 @@ export default function AudioRecorder({
         </label>
         <div className="grid grid-cols-3 gap-3">
           <button
-            onClick={() => setAudioSource('microphone')}
+            onClick={() => handleAudioSourceChange('microphone')}
             className={`p-3 rounded-lg border-2 transition-all ${
               audioSource === 'microphone'
                 ? 'border-blue-500 bg-blue-50 text-blue-700'
@@ -513,7 +549,7 @@ export default function AudioRecorder({
           </button>
           
           <button
-            onClick={() => setAudioSource('system')}
+            onClick={() => handleAudioSourceChange('system')}
             className={`p-3 rounded-lg border-2 transition-all ${
               !hasDisplayMediaSupport
                 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -532,7 +568,7 @@ export default function AudioRecorder({
           </button>
           
           <button
-            onClick={() => setAudioSource('both')}
+            onClick={() => handleAudioSourceChange('both')}
             className={`p-3 rounded-lg border-2 transition-all ${
               !hasDisplayMediaSupport
                 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -611,6 +647,35 @@ export default function AudioRecorder({
         </div>
       )}
 
+      {showSystemGuide && (
+        <div className="mt-4 border border-blue-200 bg-blue-50 rounded-lg p-4 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-blue-800">Hoparlör Sesini Kaydetme Adımları</h3>
+              <p className="text-xs text-blue-700 mt-1">
+                Chrome güvenlik kuralları gereği sistem sesini paylaşmak için aşağıdaki adımları izleyin:
+              </p>
+            </div>
+            <button
+              onClick={() => setShowSystemGuide(false)}
+              className="text-blue-600 hover:text-blue-800 text-xs font-semibold"
+            >
+              Gizle
+            </button>
+          </div>
+          <ol className="list-decimal list-inside text-xs text-blue-700 space-y-1">
+            <li>Kayıt başlatmadan önce ses çalan sekmeyi veya uygulamayı açık tutun.</li>
+            <li>"Kayıt Başlat" dediğinizde Chrome'un paylaşılan ekran penceresinden <strong>"Sekme"</strong> seçeneğini işaretleyin.</li>
+            <li>Ses çalan sekmeyi seçip <strong>"Sekme sesi"</strong> (veya "Sistem sesini paylaş") kutucuğunu aktif hale getirin.</li>
+            <li>Eğer hem mikrofon hem hoparlör seçtiyseniz, birlikte tek bir kayıtta karışacaktır.</li>
+            <li>Paylaşım penceresini kapatırsanız kayıt tamamlanır; tekrar paylaşım yapmak için yeniden "Kayıt Başlat" butonuna tıklayın.</li>
+          </ol>
+          <p className="text-[11px] text-blue-600">
+            Not: Anlık transkripsiyon yalnızca mikrofon girişiyle çalışır. Sistem sesini kaydederken metni sonradan Gemini ile üretebilirsiniz.
+          </p>
+        </div>
+      )}
+
       {/* Audio Source Info */}
       <div className="mt-4 p-3 bg-blue-50 rounded-lg">
         <div className="text-sm text-blue-800">
@@ -623,6 +688,8 @@ export default function AudioRecorder({
         {audioSource === 'system' && (
           <div className="text-xs text-blue-600 mt-1">
             <strong>ÖNEMLİ:</strong> Tüm ekran değil, ses çıkışı olan SEKME seçin (YouTube, Spotify, Zoom vb.) ve "Sistem sesini paylaş" kutucuğunu işaretleyin.
+            <br />
+            Anlık transkripsiyon bu modda devre dışıdır; kayıt sonrası Gemini'den iyileştirme alabilirsiniz.
           </div>
         )}
         {audioSource === 'both' && (
