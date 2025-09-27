@@ -17,3 +17,17 @@ Recent history mixes Conventional Commit prefixes (`feat:`, `fix:`) with plain d
 
 ## Configuration & Secrets
 Create a local `.env` with `REACT_APP_GEMINI_API_KEY`, `REACT_APP_GEMINI_MODEL`, and `REACT_APP_API_RATE_LIMIT`. Never commit API keys; instead document expected values in the PR body and scrub logs before sharing recordings or transcripts.
+
+## Current Implementation Notes
+- Audio capture flows through `AudioRecorder`, which now reports accurate second-level durations; `TranscriptionPanel` displays the same timing while handling blob lifecycle cleanup.
+- Saved recordings live in localStorage under `voicescript-recordings`; each entry tracks `duration`, `geminiTranscript`, and `aiImprovedTranscript`, so guard against clearing these fields when cloning objects.
+- Gemini integrations default to `gemini-2.5-flash-preview-09-2025`; `GeminiKeyManager` retries with `gemini-2.0-flash-exp` on 404 and preserves key status for offline runs.
+- The repository still contains an older `AIVoice/` mirror with duplicate sources—lint failures originate there. Avoid editing that tree unless specifically migrating or deleting it.
+
+## Agent Working Notes
+- Log material changes here (date + short bullet) so future automation runs pick up context without rescanning the repo.
+- When you update recording, Gemini, or AI logic, note affected files and any new localStorage fields.
+- Clear a bullet once the corresponding work lands in the main README or official docs, otherwise leave it as a breadcrumb for the next session.
+
+_2025-09-27_: Audio player duration syncing and Gemini model bump completed (`src/App.tsx`, `src/components/AudioRecorder.tsx`, `src/components/TranscriptionPanel.tsx`, `src/services/GeminiKeyManager.ts`).
+_2025-09-27_: Realtime transcript now renders plain text with relative timestamps while Gemini output keeps its own speaker timing (`src/components/AudioRecorder.tsx`, `src/components/TranscriptionPanel.tsx`).

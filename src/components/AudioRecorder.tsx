@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Square, Play, Pause, Volume2, Users } from 'lucide-react';
+import { Mic, MicOff, Square, Volume2, Users } from 'lucide-react';
 
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob, finalTranscription: string, durationSeconds: number) => void;
@@ -34,19 +34,15 @@ export default function AudioRecorder({
   const [isSupported, setIsSupported] = useState(true);
   const [hasDisplayMediaSupport, setHasDisplayMediaSupport] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentSpeaker, setCurrentSpeaker] = useState('Kişi A');
-  const [speakerHistory, setSpeakerHistory] = useState<string[]>(['Kişi A']);
-  const [speakerCount, setSpeakerCount] = useState(1);
-  const [lastSpeechTime, setLastSpeechTime] = useState(Date.now());
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
   const [recordingTimer, setRecordingTimer] = useState<number | null>(null);
   const finalDurationRef = useRef<number>(0);
+  const recordingStartTimeRef = useRef<number | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const silenceTimeoutRef = useRef<number | null>(null);
   const interimTextRef = useRef<string>('');
   const finalTextRef = useRef<string>('');
 
@@ -69,44 +65,17 @@ export default function AudioRecorder({
       setError('Sistem sesi yakalama bu tarayıcıda desteklenmiyor. Mikrofon moduna geçildi.');
     }
 
-    return () => {
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-      }
-    };
   }, []);
 
-  const detectSpeakerChange = (speechLength: number) => {
-    const now = Date.now();
-    const timeSinceLastSpeech = now - lastSpeechTime;
-    
-    // 3 saniyeden fazla sessizlik veya uzun konuşma varsa konuşmacı değişmiş olabilir
-    const shouldChangeSpeaker = timeSinceLastSpeech > 3000 || speechLength > 100;
-    
-    if (shouldChangeSpeaker) {
-      const speakerLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-      const currentIndex = speakerLetters.findIndex(letter => currentSpeaker === `Kişi ${letter}`);
-      
-      let nextSpeaker;
-      if (currentIndex === -1 || currentIndex >= speakerLetters.length - 1) {
-        // Yeni konuşmacı ekle
-        const newSpeakerLetter = speakerLetters[speakerCount];
-        nextSpeaker = `Kişi ${newSpeakerLetter}`;
-        setSpeakerCount(prev => prev + 1);
-      } else {
-        // Mevcut konuşmacılar arasında geçiş yap
-        const nextLetter = speakerLetters[(currentIndex + 1) % Math.min(speakerCount, speakerLetters.length)];
-        nextSpeaker = `Kişi ${nextLetter}`;
-      }
-      
-      setCurrentSpeaker(nextSpeaker);
-      
-      if (!speakerHistory.includes(nextSpeaker)) {
-        setSpeakerHistory(prev => [...prev, nextSpeaker]);
-      }
+  const formatElapsedTime = (totalSeconds: number): string => {
+    if (!Number.isFinite(totalSeconds)) {
+      return '00:00';
     }
-    
-    setLastSpeechTime(now);
+
+    const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+    const minutes = Math.floor(safeSeconds / 60);
+    const seconds = safeSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
   const setupSpeechRecognition = () => {
@@ -135,15 +104,17 @@ export default function AudioRecorder({
 
         if (event.results[i].isFinal) {
           finalTranscript += transcript;
-          detectSpeakerChange(transcript.length);
         } else {
           interimTranscript += transcript;
         }
       }
 
       if (finalTranscript) {
-        const timestamp = new Date().toLocaleTimeString('tr-TR');
-        const formattedText = `[${timestamp}] ${currentSpeaker}: ${finalTranscript}\n`;
+        const startedAt = recordingStartTimeRef.current;
+        const elapsedSeconds = startedAt
+          ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+          : recordingTime;
+        const formattedText = `[${formatElapsedTime(elapsedSeconds)}] ${finalTranscript}\n`;
 
         const newText = finalTextRef.current + formattedText;
         finalTextRef.current = newText;
@@ -155,7 +126,11 @@ export default function AudioRecorder({
       // Interim results için geçici gösterim (gri renkte)
       if (interimTranscript) {
         interimTextRef.current = interimTranscript;
-        const tempText = finalTextRef.current + `${currentSpeaker}: ${interimTranscript}...`;
+        const startedAt = recordingStartTimeRef.current;
+        const elapsedSeconds = startedAt
+          ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+          : recordingTime;
+        const tempText = `${finalTextRef.current}[${formatElapsedTime(elapsedSeconds)}] ${interimTranscript}...`;
         setRealtimeText(tempText);
         // Also update transcript for interim results to show progress
         setTranscript(tempText);
@@ -370,10 +345,6 @@ export default function AudioRecorder({
       interimTextRef.current = '';
       setRealtimeText('');
       setTranscript(''); // İkinci kayıt için transcript state'ini temizle
-      setCurrentSpeaker('Kişi A');
-      setSpeakerHistory(['Kişi A']);
-      setSpeakerCount(1);
-      setLastSpeechTime(Date.now());
       
       // Get audio stream
       const stream = await getAudioStream();
@@ -416,6 +387,7 @@ export default function AudioRecorder({
       // Start recording timer
       const startTime = Date.now();
       setRecordingStartTime(startTime);
+      recordingStartTimeRef.current = startTime;
       setRecordingTime(0);
 
       const timer = window.setInterval(() => {
@@ -456,6 +428,7 @@ export default function AudioRecorder({
       finalDurationRef.current = finalDuration;
       setRecordingTime(finalDuration);
       setRecordingStartTime(null);
+      recordingStartTimeRef.current = null;
 
       // Stop MediaRecorder
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -516,15 +489,9 @@ export default function AudioRecorder({
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-gray-800">Ses Kaydı ve Transkripsiyon</h2>
-        <div className="flex items-center space-x-2">
-          <Users className="w-5 h-5 text-gray-500" />
-          <span className="text-sm text-gray-600">
-            {speakerHistory.length} Konuşmacı
-          </span>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold text-gray-800">Ses Kaydı ve Transkripsiyon</h2>
         </div>
-      </div>
 
       {/* Audio Source Selection */}
       <div className="mb-6">
@@ -620,23 +587,6 @@ export default function AudioRecorder({
           )}
         </button>
       </div>
-
-      {/* Current Speaker Indicator */}
-      {isRecording && (
-        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-              <span className="text-sm font-medium text-gray-700">
-                Şu an konuşan: {currentSpeaker}
-              </span>
-            </div>
-            <div className="text-xs text-gray-500">
-              {speakerHistory.join(', ')} algılandı
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Realtime Transcription Display */}
       {realtimeText && (

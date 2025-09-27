@@ -286,15 +286,22 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
 
   // Count speakers from Gemini transcription
   const countSpeakersFromTranscription = (transcription: string): number => {
-    // Match patterns like "A Kişisi", "B Kişisi", "C Kişisi", etc.
-    const speakerPattern = /([A-Z])\s*Kişisi/gi;
-    const matches = transcription.match(speakerPattern);
+    const normalizedText = transcription || '';
+    const modernMatches = [...normalizedText.matchAll(/Konuşmacı\s*(\d+)/gi)]
+      .map(match => match[1]);
 
-    if (!matches) return 1;
+    if (modernMatches.length > 0) {
+      return Math.max(new Set(modernMatches).size, 1);
+    }
 
-    // Get unique speaker letters
-    const uniqueSpeakers = new Set(matches.map(match => match.charAt(0).toUpperCase()));
-    return Math.max(uniqueSpeakers.size, 1);
+    const legacyMatches = [...normalizedText.matchAll(/([A-Z])\s*Kişisi/gi)]
+      .map(match => match[1].toUpperCase());
+
+    if (legacyMatches.length > 0) {
+      return Math.max(new Set(legacyMatches).size, 1);
+    }
+
+    return 1;
   };
 
   // Gemini API Integration - Audio Transcription with Key Rotation
@@ -306,15 +313,15 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
       console.warn('No valid Gemini API keys found, using demo transcription');
       const demoTranscription = `📋 BAŞLIK: Gemini Ses Transkripsiyon Demo
 
-A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Bu bir Gemini API ile ses transkripsiyon demo metnidir. Ayarlar sayfasından API anahtarı ekleyerek gerçek transkripsiyon özelliğini kullanabilirsiniz.
+👤 Konuşmacı 1 [${new Date().toLocaleTimeString('tr-TR')}]: Bu bir Gemini API ile ses transkripsiyon demo metnidir. Ayarlar sayfasından API anahtarı ekleyerek gerçek transkripsiyon özelliğini kullanabilirsiniz.
 
-B Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Ses dosyası boyutu: ${(audioBlob.size / 1024).toFixed(2)} KB. Demo modunda çalışılıyor.
+👤 Konuşmacı 2 [${new Date().toLocaleTimeString('tr-TR')}]: Ses dosyası boyutu: ${(audioBlob.size / 1024).toFixed(2)} KB. Demo modunda çalışılıyor.
 
 📋 BAŞLIK: Kurulum Gerekli
 
 Sistem: Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli bir API anahtarı ekleyin.`;
 
-      setGeminiTranscription(demoTranscription);
+      setGeminiTranscription(normalizeGeminiTimestamps(demoTranscription));
       setActiveTab('gemini');
       return;
     }
@@ -344,12 +351,12 @@ Sistem: Gemini API anahtarı bulunamadı. Lütfen Ayarlar sayfasından geçerli 
           {
             parts: [
               {
-                text: `Bu ses kaydını Türkçe olarak yazıya dök. Konuşmacıları ayır ve şu formatta göster:
+                text: `Bu ses kaydını Türkçe olarak yazıya dök. Konuşmacıları ayır ve her satırı şu formatta yaz:
 
-A Kişisi [zaman]: konuşma metni
-B Kişisi [zaman]: konuşma metni
+👤 Konuşmacı 1 [dakika:saniye]: metin
+👤 Konuşmacı 2 [dakika:saniye]: metin
 
-Başlıkları 📋 BAŞLIK: formatında göster. Noktalama işaretlerini ekle ve düzgün paragraflar oluştur.`
+Zaman bilgisini kaydın gerçek başlangıç anına göre hesapla (örneğin konuşma 4. saniyede başlıyorsa [00:04] yaz). Varsayılan konuşmacı adlarını "Konuşmacı 1", "Konuşmacı 2" şeklinde sırayla kullan. Başlıkları 📋 BAŞLIK: formatında göster. Noktalama işaretlerini ekle ve düzgün paragraflar oluştur.`
               },
               {
                 inline_data: {
@@ -393,18 +400,19 @@ Başlıkları 📋 BAŞLIK: formatında göster. Noktalama işaretlerini ekle ve
         throw new Error('Gemini\'den transkripsiyon alınamadı');
       }
 
-      setGeminiTranscription(transcribedText);
+      const normalizedTranscription = normalizeGeminiTimestamps(transcribedText);
+      setGeminiTranscription(normalizedTranscription);
       setActiveTab('gemini');
 
       // Count speakers from transcription and update recording
-      const detectedSpeakerCount = countSpeakersFromTranscription(transcribedText);
+      const detectedSpeakerCount = countSpeakersFromTranscription(normalizedTranscription);
       console.log(`🎤 Detected ${detectedSpeakerCount} speakers in Gemini transcription`);
 
       // Update recording with correct speaker count
       if (onUpdateRecording) {
         // Update the current recording if we have an ID, otherwise update the most recent
         onUpdateRecording(currentRecordingId || '', {
-          geminiTranscript: transcribedText,
+          geminiTranscript: normalizedTranscription,
           speakerCount: detectedSpeakerCount
         });
       }
@@ -424,21 +432,22 @@ Başlıkları 📋 BAŞLIK: formatında göster. Noktalama işaretlerini ekle ve
       // Fallback to demo transcription
       const demoTranscription = `📋 BAŞLIK: Gemini Transkripsiyon (Demo - Hata)
 
-A Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Gemini API ile ses transkripsiyon sırasında hata oluştu: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+👤 Konuşmacı 1 [${new Date().toLocaleTimeString('tr-TR')}]: Gemini API ile ses transkripsiyon sırasında hata oluştu: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
 
-B Kişisi [${new Date().toLocaleTimeString('tr-TR')}]: Demo transkripsiyon gösteriliyor. Gerçek API anahtarı ve model ayarlarını kontrol edin.
+👤 Konuşmacı 2 [${new Date().toLocaleTimeString('tr-TR')}]: Demo transkripsiyon gösteriliyor. Gerçek API anahtarı ve model ayarlarını kontrol edin.
 
 📋 BAŞLIK: Teknik Bilgiler
 
 Sistem: Ses dosyası boyutu ${(audioBlob.size / 1024).toFixed(2)} KB, format: ${audioBlob.type}`;
       
-      setGeminiTranscription(demoTranscription);
+      const normalizedFallback = normalizeGeminiTimestamps(demoTranscription);
+      setGeminiTranscription(normalizedFallback);
       setActiveTab('gemini');
       
       // Demo transkripsiyon için de mevcut kaydı güncelle
       if (onUpdateRecording) {
         onUpdateRecording(currentRecordingId || '', {
-          geminiTranscript: demoTranscription,
+          geminiTranscript: normalizedFallback,
           speakerCount: 1
         });
       }
@@ -459,6 +468,19 @@ Sistem: Ses dosyası boyutu ${(audioBlob.size / 1024).toFixed(2)} KB, format: ${
       };
       reader.onerror = reject;
       reader.readAsDataURL(blob);
+    });
+  };
+
+  const normalizeGeminiTimestamps = (text: string): string => {
+    if (!text) {
+      return text;
+    }
+
+    // Convert dot-separated timestamps (e.g., 00.05) to colon format for consistency
+    return text.replace(/\[(\d{1,2})\.(\d{2})\]/g, (_match, minutes: string, seconds: string) => {
+      const safeMinutes = minutes.padStart(2, '0');
+      const safeSeconds = seconds.padStart(2, '0');
+      return `[${safeMinutes}:${safeSeconds}]`;
     });
   };
 
@@ -494,7 +516,7 @@ ${rawTranscription}`,
       
       detailed: `Bu Türkçe toplantı transkripsiyon metnini profesyonel bir dokümana çevir. Şunları yap:
 1. Başlıkları net hiyerarşiye koy (📋 BAŞLIK: formatını koru)
-2. Konuşmacı geçişlerini düzenle (A Kişisi, B Kişisi formatını koru)
+2. Konuşmacı geçişlerini düzenle (👤 Konuşmacı 1, 👤 Konuşmacı 2 formatını koru)
 3. Tekrarları temizle
 4. Dilbilgisi hatalarını düzelt
 5. Paragraf yapısını iyileştir
@@ -503,8 +525,7 @@ ${rawTranscription}`,
 Metin:
 ${rawTranscription}`,
       
-      summary: `Bu Türkçe transkripsiyon metninden ana konuları ve önemli noktaları özetleyerek yapılandırılmış bir özet çıkar. Başlık formatını (📋) ve konuşmacı etiketlerini (👤) koru:
-      summary: \`Bu Türkçe transkripsiyon metninden ana konuları ve önemli noktaları özetleyerek yapılandırılmış bir özet çıkar. Başlık formatını (📋) ve konuşmacı etiketlerini (A Kişisi, B Kişisi) koru:
+      summary: `Bu Türkçe transkripsiyon metninden ana konuları ve önemli noktaları özetleyerek yapılandırılmış bir özet çıkar. Başlık formatını (📋) ve konuşmacı etiketlerini (👤 Konuşmacı N) koru:
 
 ${rawTranscription}`
     };
@@ -660,6 +681,19 @@ ${rawTranscription}`
       .replace(/\s+/g, ' ')
       .trim();
 
+    // Convert legacy speaker labels (A Kişisi) to the modern format
+    formatted = formatted.replace(/([A-Z])\s*Kişisi\s*\[([^\]]+)\]:\s*/gi, (_match: string, letter: string, time: string) => {
+      const speakerIndex = letter.toUpperCase().charCodeAt(0) - 64;
+      const label = Number.isFinite(speakerIndex) && speakerIndex > 0
+        ? `Konuşmacı ${speakerIndex}`
+        : `Konuşmacı ${letter.toUpperCase()}`;
+      return `👤 ${label} [${time}]: `;
+    });
+
+    // Normalize speaker label spacing and ensure icon usage
+    formatted = formatted.replace(/👤\s*Konuşmacı\s*(\d+)\s*\[([^\]]+)\]:\s*/gi, '\n\n👤 Konuşmacı $1 [$2]: ');
+    formatted = formatted.replace(/(^|\n)\s*Konuşmacı\s*(\d+)\s*\[([^\]]+)\]:\s*/gi, '\n\n👤 Konuşmacı $2 [$3]: ');
+
     // Improve speaker sections
     const sections = formatted.split(/(?=👤)/);
     formatted = sections
@@ -680,9 +714,6 @@ ${rawTranscription}`
     // Improve title formatting
     formatted = formatted.replace(/📋\s*(BAŞLIK|başlık|Başlık):\s*/gi, '\n\n📋 BAŞLIK: ');
     
-    // Improve speaker formatting
-    formatted = formatted.replace(/([AB])\s*Kişisi\s*\[([^\]]+)\]:\s*/gi, '$1 Kişisi [$2]: ');
-    
     // Add proper punctuation
     formatted = formatted.replace(/([a-zçğıöşü])\s+([A-ZÇĞIÖŞÜ])/g, '$1. $2');
     
@@ -702,7 +733,7 @@ ${rawTranscription}`
     summary.push('📋 BAŞLIK: Konuşma Özeti\n');
     
     // Extract main points
-    const speakers = lines.filter(line => line.includes('Kişisi'));
+    const speakers = lines.filter(line => /Konuşmacı\s*\d+/i.test(line) || /[A-Z]\s*Kişisi/i.test(line));
     const titles = lines.filter(line => line.includes('📋'));
     
     if (titles.length > 0) {
@@ -718,14 +749,23 @@ ${rawTranscription}`
       summary.push('## Katılımcı Görüşleri:');
       speakers.slice(0, 3).forEach(speaker => {
         const cleanSpeaker = speaker
-          .replace(/[AB]\s*Kişisi\s*\[.*?\]:\s*/, '')
+          .replace(/👤\s*Konuşmacı\s*\d+\s*\[.*?\]:\s*/i, '')
+          .replace(/[A-Z]\s*Kişisi\s*\[.*?\]:\s*/i, '')
           .substring(0, 100) + '...';
         summary.push(`• ${cleanSpeaker}`);
       });
     }
 
     summary.push('\n## Özet Bilgiler:');
-    summary.push(`• Toplam konuşmacı: ${new Set(speakers.map(s => s.match(/([AB])\s*Kişisi/)?.[1] || 'Bilinmiyor')).size}`);
+    const speakerIds = speakers.map(s => {
+      const modernMatch = s.match(/Konuşmacı\s*(\d+)/i)?.[1];
+      if (modernMatch) {
+        return modernMatch;
+      }
+      const legacyMatch = s.match(/([A-Z])\s*Kişisi/i)?.[1];
+      return legacyMatch || 'Bilinmiyor';
+    });
+    summary.push(`• Toplam konuşmacı: ${new Set(speakerIds).size}`);
     summary.push(`• Metin uzunluğu: ${text.length} karakter`);
     summary.push(`• Oluşturulma: ${new Date().toLocaleString('tr-TR')}`);
 
