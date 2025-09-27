@@ -840,6 +840,19 @@ ${rawTranscription}`
     return summary.join('\n');
   };
 
+  const stripMarkdownTokens = (value: string): string => {
+    if (!value) {
+      return '';
+    }
+    return value
+      .replace(/\*\*\*(.*?)\*\*\*/g, '$1')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/\*/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  };
+
   type AiPreviewNode =
     | { type: 'heading'; title: string; detail?: string }
     | { type: 'bullet'; items: string[] }
@@ -877,8 +890,52 @@ ${rawTranscription}`
         return;
       }
 
-      if (/^[-*•]\s+/.test(line)) {
-        bulletBuffer.push(line.replace(/^[-*•]\s*/, '').trim());
+      const speakerPattern = /^\*{0,2}(Kon[uşu]mac[ıi]|Konusmaci)\s*(\d+)\*{0,2}\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$/i;
+      const speakerMatch = line.match(speakerPattern);
+      if (speakerMatch) {
+        flushBullets();
+        const speakerNumber = speakerMatch[2];
+        const timeRaw = speakerMatch[3]?.trim();
+        const contentRaw = speakerMatch[4]?.trim() ?? '';
+        nodes.push({
+          type: 'speaker',
+          speaker: `Konuşmacı ${speakerNumber}`,
+          time: timeRaw ? stripMarkdownTokens(timeRaw) : undefined,
+          content: stripMarkdownTokens(contentRaw)
+        });
+        return;
+      }
+
+      if (line.startsWith('👤')) {
+        flushBullets();
+        const match = line.match(/^👤\s*(.*?)\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$/);
+        const speakerRaw = match?.[1] ?? 'Konuşmacı';
+        const timeRaw = match?.[2]?.trim();
+        const contentRaw = match?.[3]?.trim() ?? '';
+        nodes.push({
+          type: 'speaker',
+          speaker: stripMarkdownTokens(speakerRaw).replace(/Konusmaci|Konusmacı|Konuşmaci/gi, 'Konuşmacı'),
+          time: timeRaw ? stripMarkdownTokens(timeRaw) : undefined,
+          content: stripMarkdownTokens(contentRaw)
+        });
+        return;
+      }
+
+      if (/^[-•]\s+/.test(line)) {
+        const bulletText = stripMarkdownTokens(line.replace(/^[-•]\s*/, ''));
+        if (bulletText) {
+          bulletBuffer.push(bulletText);
+        }
+        return;
+      }
+
+      const looseHeading = line.match(/^\*{2,}\s*(.+?)(?:\s*\*{2,})?$/);
+      if (looseHeading) {
+        flushBullets();
+        const headingText = stripMarkdownTokens(looseHeading[1]);
+        if (headingText) {
+          nodes.push({ type: 'heading', title: headingText });
+        }
         return;
       }
 
@@ -886,7 +943,7 @@ ${rawTranscription}`
 
       const markdownHeadingMatch = line.match(/^#{1,3}\s*(.*)$/);
       if (markdownHeadingMatch) {
-        const title = markdownHeadingMatch[1].trim();
+        const title = stripMarkdownTokens(markdownHeadingMatch[1]);
         if (title) {
           nodes.push({ type: 'heading', title });
         }
@@ -896,46 +953,28 @@ ${rawTranscription}`
       if (line.startsWith('📋')) {
         const cleaned = line.replace(/^📋\s*/, '').trim();
         const [rawTitle, ...rest] = cleaned.split(':');
-        const title = (rest.length > 0 ? rest.join(':') : rawTitle).trim();
-        const descriptor = rest.length > 0 ? rawTitle.trim() : undefined;
+        const title = stripMarkdownTokens(rest.length > 0 ? rest.join(':') : rawTitle);
+        const descriptorRaw = rest.length > 0 ? rawTitle.trim() : undefined;
+        const descriptor = descriptorRaw && descriptorRaw.toLowerCase() !== 'başlık'
+          ? stripMarkdownTokens(descriptorRaw)
+          : undefined;
         nodes.push({ type: 'heading', title, detail: descriptor });
         return;
       }
 
-      if (line.startsWith('👤')) {
-        const match = line.match(/^👤\s*(.*?)\s*\[([^\]]*)\]:\s*(.*)$/);
-        if (match) {
-          const [, speakerRaw, timeRaw, contentRaw] = match;
-          nodes.push({
-            type: 'speaker',
-            speaker: speakerRaw.trim() || 'Konuşmacı',
-            time: timeRaw.trim() || undefined,
-            content: contentRaw.trim()
-          });
-          return;
-        }
-
-        nodes.push({
-          type: 'speaker',
-          speaker: 'Konuşmacı',
-          content: line.replace(/^👤\s*/, '').trim()
-        });
-        return;
-      }
-
-      const fallbackSpeakerMatch = line.match(/^(Konuşmacı\s*\d+)\s*\[([^\]]*)\]:\s*(.*)$/i);
+      const fallbackSpeakerMatch = line.match(/^((?:Kon[uşu]mac[ıi]|Konusmaci)\s*\d+)\s*\[([^\]]*)\]\s*:\s*(.*)$/i);
       if (fallbackSpeakerMatch) {
         const [, label, timeRaw, contentRaw] = fallbackSpeakerMatch;
         nodes.push({
           type: 'speaker',
-          speaker: label.trim(),
-          time: timeRaw.trim() || undefined,
-          content: contentRaw.trim()
+          speaker: stripMarkdownTokens(label).replace(/Konusmaci|Konusmacı|Konuşmaci/gi, 'Konuşmacı'),
+          time: timeRaw.trim() ? stripMarkdownTokens(timeRaw) : undefined,
+          content: stripMarkdownTokens(contentRaw.trim())
         });
         return;
       }
 
-      nodes.push({ type: 'paragraph', content: line });
+      nodes.push({ type: 'paragraph', content: stripMarkdownTokens(line) });
     });
 
     flushBullets();
@@ -955,7 +994,7 @@ ${rawTranscription}`
                 key={`ai-heading-${index}`}
                 className="rounded-xl border-l-4 border-blue-500 bg-white/90 p-4 shadow-sm"
               >
-                {node.detail && (
+                {node.detail && node.detail.trim().toLowerCase() !== 'başlık' && (
                   <div className="text-xs uppercase tracking-wider text-blue-500 font-semibold mb-1">
                     {node.detail}
                   </div>

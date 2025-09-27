@@ -1,6 +1,6 @@
 import React from 'react';
 import { AIImprovement } from './TranscriptionPanel';
-import { FileDown, FileText, Sparkles, GitCompare, CheckCircle } from 'lucide-react';
+import { FileDown, FileText, Sparkles, GitCompare } from 'lucide-react';
 import jsPDF from 'jspdf';
 
 interface PDFExportProps {
@@ -57,27 +57,255 @@ const PDFExport: React.FC<PDFExportProps> = ({
     return converted;
   };
 
-  // Alternatif: Türkçe karakterleri koruyarak encoding düzelt
-  const fixTurkishEncoding = (text: string): string => {
-    if (!text) return '';
-    
-    // UTF-8 encoding problemlerini düzelt
-    return text
-      .replace(/Ã§/g, 'ç')
-      .replace(/Ã‡/g, 'Ç')
-      .replace(/ÄŸ/g, 'ğ')
-      .replace(/Ä/g, 'Ğ')
-      .replace(/Å/g, 'ş')
-      .replace(/Åž/g, 'Ş')
-      .replace(/Ã¼/g, 'ü')
-      .replace(/Ãœ/g, 'Ü')
-      .replace(/Ã¶/g, 'ö')
-      .replace(/Ã–/g, 'Ö')
-      .replace(/Ä±/g, 'ı')
-      .replace(/Ä°/g, 'İ')
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
+  interface SpeechInsights {
+    durationLabel: string;
+    wordCount: number;
+    wpmLabel: string;
+    toneLabel: string;
+  }
+
+  const formatDurationDetailed = (seconds: number | undefined): string => {
+    if (!seconds || seconds <= 0) {
+      return 'Bilgi yok';
+    }
+
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    const minuteLabel = minutes > 0 ? `${minutes} dk` : '';
+    const secondLabel = `${remainingSeconds} sn`;
+    return [minuteLabel, secondLabel].filter(Boolean).join(' ');
+  };
+
+  const calculateSpeechInsights = (text: string, durationSeconds?: number): SpeechInsights => {
+    const sanitized = text
+      .replace(/👤\s*Konuşmacı\s*\d+\s*\[[^\]]*\]:?/gi, '')
+      .replace(/📋\s*BAŞLIK:?/gi, '')
+      .replace(/[•-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    const tokens = sanitized ? sanitized.split(' ') : [];
+    const wordCount = tokens.filter(Boolean).length;
+
+    const effectiveDuration = durationSeconds && durationSeconds > 0 ? durationSeconds : undefined;
+    const minutes = effectiveDuration ? effectiveDuration / 60 : undefined;
+    const wordsPerMinute = minutes ? Math.round(wordCount / minutes) : null;
+
+    let paceLabel = 'Bilgi yok';
+    if (wordsPerMinute !== null && Number.isFinite(wordsPerMinute)) {
+      if (wordsPerMinute < 100) paceLabel = `${wordsPerMinute} kelime/dk (Yavaş)`;
+      else if (wordsPerMinute <= 150) paceLabel = `${wordsPerMinute} kelime/dk (Doğal)`;
+      else paceLabel = `${wordsPerMinute} kelime/dk (Hızlı)`;
+    }
+
+    const exclamationCount = (text.match(/!/g) || []).length;
+    const questionCount = (text.match(/\?/g) || []).length;
+    const uppercaseWords = (text.match(/\b[\p{Lu}]{4,}\b/gu) || []).length;
+
+    const positiveWords = ['teşekkür', 'mutlu', 'harika', 'iyi', 'memnun'];
+    const negativeWords = ['sorun', 'problem', 'endişe', 'gergin', 'korku', 'hata'];
+    const fillerWords = ['hani', 'şey', 'yani', 'eee', 'aslında'];
+
+    const positiveCount = positiveWords.reduce((acc, word) => acc + (sanitized.includes(word) ? 1 : 0), 0);
+    const negativeCount = negativeWords.reduce((acc, word) => acc + (sanitized.includes(word) ? 1 : 0), 0);
+    const fillerCount = fillerWords.reduce((acc, word) => acc + (sanitized.split(word).length - 1), 0);
+
+    const toneTags: string[] = [];
+    if (negativeCount > positiveCount) toneTags.push('Gergin');
+    if (exclamationCount >= 3 || uppercaseWords >= 2) toneTags.push('Heyecanlı');
+    if (questionCount >= 3) toneTags.push('Meraklı');
+    if (fillerCount > Math.max(1, wordCount * 0.05)) toneTags.push('Düşünceli');
+
+    if (toneTags.length === 0) {
+      toneTags.push('Dengeli');
+    }
+
+    return {
+      durationLabel: formatDurationDetailed(durationSeconds),
+      wordCount,
+      wpmLabel: paceLabel,
+      toneLabel: toneTags.join(', ')
+    };
+  };
+
+  const stripMarkdownTokens = (value: string): string => {
+    if (!value) {
+      return '';
+    }
+    return value
+      .replace(/\*\*\*(.*?)\*\*\*/g, '$1')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/\*/g, '')
+      .replace(/\s{2,}/g, ' ')
       .trim();
+  };
+
+  type PdfBlock =
+    | { type: 'heading'; title: string; detail?: string }
+    | { type: 'speaker'; speaker: string; time?: string; content: string }
+    | { type: 'bullet'; content: string }
+    | { type: 'paragraph'; content: string };
+
+  const compressConsecutiveSpeakers = (text: string): string => {
+    const lines = text.split('\n');
+    const result: string[] = [];
+    let lastSpeaker: string | null = null;
+
+    lines.forEach((originalLine) => {
+      const trimmed = originalLine.trim();
+
+      if (!trimmed) {
+        result.push('');
+        lastSpeaker = null;
+        return;
+      }
+
+      const speakerMatch = trimmed.match(/^(?:👤\s*)?Konuşmacı\s*(\d+)(?:\s*\[([^\]]*)\])?:\s*(.*)$/i);
+      if (speakerMatch) {
+        const speakerId = speakerMatch[1];
+        const timeRaw = speakerMatch[2]?.trim();
+        const content = speakerMatch[3].trim();
+
+        if (lastSpeaker === speakerId) {
+          const parts = [];
+          if (timeRaw) parts.push(`[${timeRaw}]`);
+          if (content) parts.push(content);
+          if (parts.length > 0) {
+            result.push(`  • ${parts.join(' ')}`);
+          }
+        } else {
+          lastSpeaker = speakerId;
+          const timeSegment = timeRaw ? ` [${timeRaw}]` : '';
+          const prefix = `👤 Konuşmacı ${speakerId}${timeSegment}:`;
+          const line = content ? `${prefix} ${content}` : prefix;
+          result.push(line.trim());
+        }
+        return;
+      }
+
+      if (/^📋/.test(trimmed) || /^#{1,3}\s/.test(trimmed)) {
+        lastSpeaker = null;
+      }
+
+      const continuationMatch = trimmed.match(/^\[(\d{1,2}:\d{2})\]\s*(.*)$/);
+      if (continuationMatch && lastSpeaker) {
+        const timeSegment = continuationMatch[1];
+        const content = continuationMatch[2].trim();
+        result.push(`  • [${timeSegment}]${content ? ` ${content}` : ''}`);
+        return;
+      }
+
+      result.push(originalLine);
+    });
+
+    return result
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\s*•\s*$/gm, '')
+      .trimEnd();
+  };
+
+  const parseTranscriptionBlocks = (text: string): PdfBlock[] => {
+    if (!text) return [];
+
+    const normalized = compressConsecutiveSpeakers(text.replace(/\r\n/g, '\n'));
+    const blocks: PdfBlock[] = [];
+    normalized.split('\n').forEach((rawLine) => {
+      const line = rawLine.trim();
+      if (!line) {
+        blocks.push({ type: 'paragraph', content: '' });
+        return;
+      }
+
+      if (/^bu\s+transkripsiyon\s+metni/i.test(line)) {
+        return;
+      }
+
+      const speakerPattern = /^\*{0,2}(Kon[uşu]mac[ıi]|Konusmaci)\s*(\d+)\*{0,2}\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$/i;
+      const speakerMatch = line.match(speakerPattern);
+      if (speakerMatch) {
+        const speakerNumber = speakerMatch[2];
+        const timeRaw = speakerMatch[3]?.trim();
+        const contentRaw = speakerMatch[4]?.trim() ?? '';
+        blocks.push({
+          type: 'speaker',
+          speaker: `Konuşmacı ${speakerNumber}`,
+          time: timeRaw ? stripMarkdownTokens(timeRaw) : undefined,
+          content: stripMarkdownTokens(contentRaw)
+        });
+        return;
+      }
+
+      if (line.startsWith('👤')) {
+        const match = line.match(/^👤\s*(.*?)\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$/);
+        const speakerRaw = match?.[1] ?? 'Konuşmacı';
+        const timeRaw = match?.[2]?.trim();
+        const contentRaw = match?.[3]?.trim() ?? '';
+        blocks.push({
+          type: 'speaker',
+          speaker: stripMarkdownTokens(speakerRaw).replace(/Konusmaci|Konusmacı|Konuşmaci/gi, 'Konuşmacı'),
+          time: timeRaw ? stripMarkdownTokens(timeRaw) : undefined,
+          content: stripMarkdownTokens(contentRaw)
+        });
+        return;
+      }
+
+      if (/^[-•]\s+/.test(line)) {
+        const bulletText = stripMarkdownTokens(line.replace(/^[-•]\s*/, ''));
+        if (bulletText) {
+          blocks.push({ type: 'bullet', content: bulletText });
+        }
+        return;
+      }
+
+      const looseHeading = line.match(/^\*{2,}\s*(.+?)(?:\s*\*{2,})?$/);
+      if (looseHeading) {
+        const headingText = stripMarkdownTokens(looseHeading[1]);
+        if (headingText) {
+          blocks.push({ type: 'heading', title: headingText });
+        }
+        return;
+      }
+
+      const markdownHeadingMatch = line.match(/^#{1,3}\s*(.*)$/);
+      if (markdownHeadingMatch) {
+        const title = stripMarkdownTokens(markdownHeadingMatch[1]);
+        if (title) {
+          blocks.push({ type: 'heading', title });
+        }
+        return;
+      }
+
+      if (line.startsWith('📋')) {
+        const cleaned = line.replace(/^📋\s*/, '').trim();
+        const [descriptor, ...rest] = cleaned.split(':');
+        const title = stripMarkdownTokens(rest.length > 0 ? rest.join(':') : descriptor);
+        const rawDetail = rest.length > 0 ? descriptor.trim() : undefined;
+        const detail = rawDetail && rawDetail.toLowerCase() !== 'başlık'
+          ? stripMarkdownTokens(rawDetail)
+          : undefined;
+        blocks.push({ type: 'heading', title, detail });
+        return;
+      }
+
+      const fallbackSpeakerMatch = line.match(/^((?:Kon[uşu]mac[ıi]|Konusmaci)\s*\d+)\s*\[([^\]]*)\]\s*:\s*(.*)$/i);
+      if (fallbackSpeakerMatch) {
+        const [, speakerLabel, timeRaw, contentRaw] = fallbackSpeakerMatch;
+        blocks.push({
+          type: 'speaker',
+          speaker: stripMarkdownTokens(speakerLabel).replace(/Konusmaci|Konusmacı|Konuşmaci/gi, 'Konuşmacı'),
+          time: timeRaw.trim() ? stripMarkdownTokens(timeRaw) : undefined,
+          content: stripMarkdownTokens(contentRaw.trim())
+        });
+        return;
+      }
+
+      blocks.push({ type: 'paragraph', content: stripMarkdownTokens(line) });
+    });
+
+    return blocks;
   };
 
   const generatePDF = async (type: 'raw' | 'ai' | 'comparison') => {
@@ -112,60 +340,72 @@ const PDFExport: React.FC<PDFExportProps> = ({
 
       // Sayfa ayarları
       const pageWidth = doc.internal.pageSize.width;
-      const pageHeight = doc.internal.pageSize.height;
       const margin = 20;
       const maxWidth = pageWidth - (margin * 2);
 
       // Başlık
       doc.setFontSize(16);
-      doc.setTextColor(0, 0, 0);
+      doc.setTextColor(30, 30, 30);
 
-      let title = "";
+      let title = '';
       switch (type) {
         case 'raw':
-          title = "SES KAYDI - HAM TRANSKRIPSIYON";
+          title = 'SES KAYDI · HAM TRANSKRIPSIYON';
           break;
         case 'ai':
-          title = "SES KAYDI - AI IYILESTIRILMIS";
+          title = 'SES KAYDI · AI IYILESTIRMESI';
           break;
         case 'comparison':
-          title = "SES KAYDI - KARSILASTIRMALI GORUNUM";
+          title = 'SES KAYDI · KARSILASTIRMA';
           break;
       }
 
-      // Başlığı ortala
       const titleWidth = doc.getTextWidth(title);
       const titleX = (pageWidth - titleWidth) / 2;
-      doc.text(title, titleX, 25);
+      doc.text(title, titleX, 22);
 
-      // Kayıt bilgileri
-      if (recordingInfo) {
-        doc.setFontSize(9);
-        doc.setTextColor(100, 100, 100);
+      const insights = calculateSpeechInsights(transcript || aiImprovementData?.original || '', recordingInfo?.duration);
 
-        const formatDuration = (seconds: number) => {
-          const mins = Math.floor(seconds / 60);
-          const secs = seconds % 60;
-          return `${mins}:${secs.toString().padStart(2, '0')}`;
-        };
+      const summaryEntries = [
+        { label: 'Ses Kayit Süresi', value: insights.durationLabel },
+        { label: 'Konuşma Hızı', value: insights.wpmLabel },
+        { label: 'Ses Analizi', value: insights.toneLabel }
+      ];
 
-        const info = [
-          `Kayit Tarihi: ${recordingInfo.startTime.toLocaleDateString('tr-TR')} ${recordingInfo.startTime.toLocaleTimeString('tr-TR')}`,
-          `Sure: ${formatDuration(recordingInfo.duration)}`,
-          `Kalite: ${recordingInfo.quality}`,
-          `Olusturulma: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`
-        ];
+      const secondaryEntries = [
+        recordingInfo ? `Kayit Tarihi: ${recordingInfo.startTime.toLocaleDateString('tr-TR')} ${recordingInfo.startTime.toLocaleTimeString('tr-TR')}` : null,
+        `Kelime Sayisi: ${insights.wordCount}`,
+        `PDF Olusturma: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`
+      ].filter(Boolean) as string[];
 
-        let yPos = 35;
-        info.forEach(line => {
-          // Türkçe karakterleri ASCII'ye çevir
-          const cleanLine = convertTurkishCharacters(line);
-          doc.text(cleanLine, margin, yPos);
-          yPos += 4;
-        });
-      }
+      const summaryHeight = 26 + secondaryEntries.length * 4.5;
+      doc.setDrawColor(205, 220, 255);
+      doc.setFillColor(243, 246, 255);
+      doc.roundedRect(margin, 26, maxWidth, summaryHeight, 3, 3, 'FD');
 
-      let currentY = recordingInfo ? 60 : 40;
+      doc.setFontSize(10);
+      doc.setTextColor(60, 80, 120);
+
+      let infoY = 34;
+      summaryEntries.forEach(({ label, value }) => {
+        const cleanLabel = convertTurkishCharacters(`${label}:`);
+        const cleanValue = convertTurkishCharacters(value);
+        doc.setFont('helvetica', 'bold');
+        doc.text(cleanLabel, margin + 4, infoY);
+        doc.setFont('helvetica', 'normal');
+        doc.text(cleanValue, margin + 48, infoY);
+        infoY += 5;
+      });
+
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
+      secondaryEntries.forEach((entry) => {
+        const cleanEntry = convertTurkishCharacters(entry);
+        doc.text(cleanEntry, margin + 4, infoY);
+        infoY += 4.5;
+      });
+
+      const currentY = 26 + summaryHeight + 12;
 
       // İçerik kontrolü
       if (!transcript && type === 'raw') {
@@ -182,10 +422,10 @@ const PDFExport: React.FC<PDFExportProps> = ({
 
       // İçerik oluştur
       if (type === 'raw') {
-        generateStandardPDF(doc, transcript, "HAM TRANSKRIPSIYON", currentY, margin, maxWidth);
+        generateStandardPDF(doc, transcript, 'HAM TRANSKRIPSIYON', currentY, margin, maxWidth);
         doc.save(`voicescript-ham-${Date.now()}.pdf`);
       } else if (type === 'ai' && aiImprovementData) {
-        generateStandardPDF(doc, aiImprovementData.improved, "AI IYILESTIRILMIS TRANSKRIPSIYON", currentY, margin, maxWidth);
+        generateStandardPDF(doc, aiImprovementData.improved, 'AI IYILESTIRILMIS TRANSKRIPSIYON', currentY, margin, maxWidth);
         doc.save(`voicescript-ai-${Date.now()}.pdf`);
       } else if (type === 'comparison' && aiImprovementData) {
         generateComparisonPDF(doc, transcript, aiImprovementData, currentY, margin, maxWidth);
@@ -213,133 +453,265 @@ const PDFExport: React.FC<PDFExportProps> = ({
   };
 
   const generateStandardPDF = (
-    doc: jsPDF, 
-    content: string, 
-    title: string, 
-    startY: number, 
-    margin: number, 
+    doc: jsPDF,
+    content: string,
+    title: string,
+    startY: number,
+    margin: number,
     maxWidth: number
   ) => {
-    // Bölüm başlığı
     doc.setFontSize(12);
-    doc.setTextColor(0, 0, 0);
-    const cleanTitle = convertTurkishCharacters(title);
-    doc.text(cleanTitle, margin, startY);
-    
+    doc.setTextColor(30, 30, 30);
+    doc.setFont('helvetica', 'bold');
+    doc.text(convertTurkishCharacters(title), margin, startY);
+
     if (!content || !content.trim()) {
       doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
       doc.setTextColor(150, 150, 150);
-      doc.text("Henuz transkripsiyon metni bulunmuyor.", margin, startY + 15);
+      doc.text('Henuz transkripsiyon metni bulunmuyor.', margin, startY + 15);
       return;
     }
-    
-    let yPosition = startY + 15;
-    const lineHeight = 5;
+
+    const blocks = parseTranscriptionBlocks(content);
+    let yPosition = startY + 12;
     const pageHeight = doc.internal.pageSize.height;
-    
-    // İçeriği temizle ve Türkçe karakterleri düzelt
-    const processedContent = convertTurkishCharacters(content);
-    const lines = processedContent.split('\n');
-    
-    lines.forEach((line) => {
-      // Yeni sayfa kontrolü
-      if (yPosition > pageHeight - 30) {
+    const lineHeight = 5;
+
+    const ensureSpace = (neededHeight: number) => {
+      if (yPosition + neededHeight > pageHeight - 20) {
         doc.addPage();
         yPosition = 20;
       }
-      
-      if (line.trim()) {
-        // Font stilini içerik tipine göre ayarla
-        if (line.includes('BASLIK:') || line.includes('BAŞLIK:')) {
+    };
+
+    blocks.forEach((block) => {
+      switch (block.type) {
+        case 'heading': {
+          ensureSpace(9);
+          doc.setFont('helvetica', 'bold');
           doc.setFontSize(11);
-          doc.setTextColor(0, 0, 0);
-        } else if (line.includes('Kisi') && line.includes('[')) {
-          doc.setFontSize(9);
-          doc.setTextColor(100, 100, 100);
-        } else {
-          doc.setFontSize(9);
-          doc.setTextColor(0, 0, 0);
+          doc.setTextColor(45, 64, 110);
+          const heading = convertTurkishCharacters(block.title.toUpperCase());
+          doc.text(heading, margin, yPosition);
+          if (block.detail) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(120, 130, 150);
+            doc.text(convertTurkishCharacters(block.detail), margin, yPosition + 4);
+            yPosition += 9;
+          } else {
+            yPosition += 7;
+          }
+          break;
         }
-        
-        // Uzun satırları böl
-        try {
-          const wrappedLines = doc.splitTextToSize(line, maxWidth);
-          
-          if (Array.isArray(wrappedLines)) {
-            wrappedLines.forEach((wrappedLine: string) => {
-              if (yPosition > pageHeight - 30) {
-                doc.addPage();
-                yPosition = 20;
-              }
-              doc.text(wrappedLine, margin, yPosition);
+        case 'speaker': {
+          const headerHeight = block.time ? 7 : 6;
+          ensureSpace(headerHeight + 6);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(10);
+          doc.setTextColor(40, 80, 140);
+          const label = convertTurkishCharacters(block.speaker + (block.time ? ` [${block.time}]` : ''));
+          doc.text(label, margin, yPosition);
+          yPosition += 5;
+
+          if (block.content) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(33, 33, 33);
+            const wrapped = doc.splitTextToSize(convertTurkishCharacters(block.content), maxWidth - 6);
+            wrapped.forEach((line: string) => {
+              ensureSpace(lineHeight);
+              doc.text(line, margin + 6, yPosition);
               yPosition += lineHeight;
             });
-          } else {
-            doc.text(wrappedLines, margin, yPosition);
-            yPosition += lineHeight;
           }
-        } catch (textError) {
-          console.warn('Text rendering error:', textError);
-          // Fallback: basit metin render
-          const safeLine = line.substring(0, 100);
-          doc.text(safeLine, margin, yPosition);
-          yPosition += lineHeight;
+          yPosition += 2;
+          break;
         }
-      } else {
-        yPosition += 3; // Boş satır
+        case 'bullet': {
+          ensureSpace(lineHeight + 2);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(9);
+          doc.setTextColor(60, 60, 60);
+          const bulletLines = doc.splitTextToSize(convertTurkishCharacters(block.content), maxWidth - 10);
+          bulletLines.forEach((line: string, index: number) => {
+            ensureSpace(lineHeight);
+            if (index === 0) {
+              doc.text('•', margin + 2, yPosition);
+              doc.text(line, margin + 7, yPosition);
+            } else {
+              doc.text(line, margin + 7, yPosition);
+            }
+            yPosition += lineHeight;
+          });
+          yPosition += 1;
+          break;
+        }
+        case 'paragraph': {
+          if (!block.content) {
+            yPosition += 3;
+            break;
+          }
+          const paragraphLines = doc.splitTextToSize(convertTurkishCharacters(block.content), maxWidth);
+          paragraphLines.forEach((line: string) => {
+            ensureSpace(lineHeight);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(40, 40, 40);
+            doc.text(line, margin, yPosition);
+            yPosition += lineHeight;
+          });
+          yPosition += 3;
+          break;
+        }
+        default:
+          break;
       }
     });
   };
 
+  const renderComparisonPreviewBox = (
+    doc: jsPDF,
+    text: string,
+    title: string,
+    x: number,
+    y: number,
+    width: number,
+    pageHeight: number,
+    margin: number
+  ): number => {
+    const boxHeight = 70;
+    if (y + boxHeight > pageHeight - margin) {
+      doc.addPage();
+      y = margin;
+    }
+
+    doc.setDrawColor(220, 228, 255);
+    doc.setFillColor(250, 252, 255);
+    doc.roundedRect(x, y, width, boxHeight, 2, 2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(40, 70, 130);
+    doc.text(convertTurkishCharacters(title), x + 4, y + 8);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(60, 60, 60);
+
+    const contentBlocks = parseTranscriptionBlocks(text);
+    const previewLines: string[] = [];
+    contentBlocks.forEach((block) => {
+      if (previewLines.length >= 20) {
+        return;
+      }
+      if (block.type === 'heading' && block.title) {
+        previewLines.push(`■ ${block.title}`);
+      } else if (block.type === 'speaker') {
+        const speakerLabel = block.speaker;
+        const content = block.content ? ` ${block.content}` : '';
+        const time = block.time ? ` [${block.time}]` : '';
+        previewLines.push(`${speakerLabel}${time}:${content}`.trim());
+      } else if (block.type === 'bullet') {
+        previewLines.push(`• ${block.content}`);
+      } else if (block.type === 'paragraph' && block.content) {
+        previewLines.push(block.content);
+      }
+    });
+
+    const availableWidth = width - 8;
+    let textY = y + 14;
+    previewLines.slice(0, 20).forEach((line) => {
+      const wrapped = doc.splitTextToSize(convertTurkishCharacters(line), availableWidth);
+      wrapped.forEach((wrappedLine: string) => {
+        if (textY > y + boxHeight - 6) {
+          return;
+        }
+        doc.text(wrappedLine, x + 4, textY);
+        textY += 4;
+      });
+      if (textY > y + boxHeight - 6) {
+        doc.text('...', x + width - 12, y + boxHeight - 6);
+        return;
+      }
+    });
+
+    return y + boxHeight + 8;
+  };
+
   const generateComparisonPDF = (
-    doc: jsPDF, 
-    rawText: string, 
-    aiData: any, 
-    startY: number, 
-    margin: number, 
+    doc: jsPDF,
+    rawText: string,
+    aiData: AIImprovement,
+    startY: number,
+    margin: number,
     maxWidth: number
   ) => {
     const pageHeight = doc.internal.pageSize.height;
-    
-    // Başlık sayfası
-    doc.setFontSize(16);
-    doc.setTextColor(0, 0, 0);
     const pageWidth = doc.internal.pageSize.width;
-    const titleText = "KARSILASTIRMALI GORUNUM";
-    const titleWidth = doc.getTextWidth(titleText);
-    const titleX = (pageWidth - titleWidth) / 2;
-    doc.text(titleText, titleX, startY);
-    
-    // Özet bilgileri
-    doc.setFontSize(9);
-    doc.setTextColor(100, 100, 100);
-    
-    const summaryInfo = [
+
+    doc.setFontSize(15);
+    doc.setTextColor(30, 30, 30);
+    const title = 'KARSILASTIRMALI TRANSKRIPSIYON OZETI';
+    const titleWidth = doc.getTextWidth(title);
+    doc.text(title, (pageWidth - titleWidth) / 2, startY);
+
+    doc.setFontSize(10);
+    doc.setTextColor(80, 80, 80);
+    const comparisonInfo = [
       `Iyilestirme Turu: ${getImprovementTypeText(aiData.improvementType)}`,
       `Islem Tarihi: ${aiData.timestamp.toLocaleDateString('tr-TR')} ${aiData.timestamp.toLocaleTimeString('tr-TR')}`,
-      `Ham Metin Uzunlugu: ${rawText.length} karakter`,
-      `Iyilestirilmis Metin Uzunlugu: ${aiData.improved.length} karakter`
+      `Ham Metin: ${rawText.length} karakter`,
+      `AI Metni: ${aiData.improved.length} karakter`
     ];
-    
-    let yPos = startY + 15;
-    summaryInfo.forEach(info => {
-      if (yPos > pageHeight - 30) {
+
+    let yPos = startY + 12;
+    comparisonInfo.forEach((info) => {
+      if (yPos > pageHeight - margin) {
         doc.addPage();
-        yPos = 20;
+        yPos = margin;
       }
-      // Türkçe karakterleri düzelt
-      const cleanInfo = convertTurkishCharacters(info);
-      doc.text(cleanInfo, margin, yPos);
+      doc.text(convertTurkishCharacters(info), margin, yPos);
       yPos += 5;
     });
-    
-    // Sayfa 2: Ham transkripsiyon
+
+    const columnWidth = (maxWidth - 8) / 2;
+    const columnGutter = 8;
+    const previewStartY = yPos + 4;
+    const nextLeft = renderComparisonPreviewBox(
+      doc,
+      rawText,
+      'Ham Transkripsiyon (Önizleme)',
+      margin,
+      previewStartY,
+      columnWidth,
+      pageHeight,
+      margin
+    );
+    const nextRight = renderComparisonPreviewBox(
+      doc,
+      aiData.improved,
+      'AI İyileştirilmiş (Önizleme)',
+      margin + columnWidth + columnGutter,
+      previewStartY,
+      columnWidth,
+      pageHeight,
+      margin
+    );
+
+    const postPreviewY = Math.max(nextLeft, nextRight);
+    if (postPreviewY > pageHeight - margin) {
+      doc.addPage();
+    } else {
+      doc.setDrawColor(225, 230, 245);
+      doc.line(margin, postPreviewY, pageWidth - margin, postPreviewY);
+      doc.addPage();
+    }
+
+    generateStandardPDF(doc, rawText, 'HAM TRANSKRIPSIYON', margin, margin, maxWidth);
     doc.addPage();
-    generateStandardPDF(doc, rawText, "HAM TRANSKRIPSIYON", 20, margin, maxWidth);
-    
-    // Sayfa 3: AI iyileştirilmiş
-    doc.addPage();
-    generateStandardPDF(doc, aiData.improved, "AI IYILESTIRILMIS TRANSKRIPSIYON", 20, margin, maxWidth);
+    generateStandardPDF(doc, aiData.improved, 'AI IYILESTIRILMIS TRANSKRIPSIYON', margin, margin, maxWidth);
   };
 
   const getImprovementTypeText = (type: string): string => {

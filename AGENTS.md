@@ -32,3 +32,4 @@ Create a local `.env` with `REACT_APP_GEMINI_API_KEY`, `REACT_APP_GEMINI_MODEL`,
 _2025-09-27_: Audio player duration syncing and Gemini model bump completed (`src/App.tsx`, `src/components/AudioRecorder.tsx`, `src/components/TranscriptionPanel.tsx`, `src/services/GeminiKeyManager.ts`).
 _2025-09-27_: Realtime transcript now renders plain text with relative timestamps while Gemini output keeps its own speaker timing (`src/components/AudioRecorder.tsx`, `src/components/TranscriptionPanel.tsx`).
 _2025-09-27_: AI iyileştirme sekmesi kart tabanlı önizleme ve düzenleme modu ile yenilendi; Gemini çıktılarında ardışık konuşmacı satırları tek blokta gruplanıyor (`src/components/TranscriptionPanel.tsx`).
+_2025-09-27_: PDF export başlığına konuşma süresi/hızı/ton analizi eklendi, transkripsiyon blokları kart formatında render ediliyor, karşılaştırmalı PDF yeni önizleme panelleri ile geliyor (`src/components/PDFExport.tsx`).
