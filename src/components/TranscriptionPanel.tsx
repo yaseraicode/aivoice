@@ -885,6 +885,11 @@ ${rawTranscription}`
         return;
       }
 
+      if (/^[-_*]{3,}$/.test(line.replace(/\s+/g, ''))) {
+        flushBullets();
+        return;
+      }
+
       if (/^bu\s+transkripsiyon\s+metni/i.test(line)) {
         flushBullets();
         return;

@@ -219,6 +219,10 @@ const PDFExport: React.FC<PDFExportProps> = ({
         return;
       }
 
+      if (/^[-_*]{3,}$/.test(line.replace(/\s+/g, ''))) {
+        return;
+      }
+
       if (/^bu\s+transkripsiyon\s+metni/i.test(line)) {
         return;
       }
