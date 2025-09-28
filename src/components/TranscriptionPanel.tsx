@@ -1,5 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FileText, Sparkles, GitCompare, Copy, Download, RefreshCw, Play, Pause, Volume2, UserCircle, Edit3, Eye } from 'lucide-react';
+import {
+  FileText,
+  Sparkles,
+  GitCompare,
+  Copy,
+  Download,
+  RefreshCw,
+  Play,
+  Pause,
+  Volume2,
+  UserCircle,
+  Edit3,
+  Eye,
+  Info,
+  AlertTriangle,
+  CheckCircle,
+  X
+} from 'lucide-react';
 import { GeminiKeyManager } from '../services/GeminiKeyManager';
 
 export interface AIImprovement {
@@ -23,6 +40,11 @@ interface TranscriptionPanelProps {
   onSaveRecording?: () => void;
   onUpdateRecording?: (id: string, updates: any) => void;
   recordingDuration?: number;
+  noticeMessage?: {
+    type: 'success' | 'error' | 'info';
+    message: string;
+  } | null;
+  onDismissNotice?: () => void;
 }
 
 const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
@@ -37,7 +59,9 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   currentRecordingId,
   onSaveRecording,
   onUpdateRecording,
-  recordingDuration
+  recordingDuration,
+  noticeMessage,
+  onDismissNotice
 }) => {
   const [activeTab, setActiveTab] = useState<'realtime' | 'gemini' | 'ai' | 'comparison'>('realtime');
   const [isImproving, setIsImproving] = useState(false);
@@ -1119,6 +1143,31 @@ ${rawTranscription}`
     setActiveTab(tab);
   };
 
+  const getNoticeVisuals = (type: 'success' | 'error' | 'info') => {
+    switch (type) {
+      case 'success':
+        return {
+          title: 'Hazır',
+          container: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+          icon: <CheckCircle className="w-5 h-5 text-emerald-600" />
+        };
+      case 'error':
+        return {
+          title: 'Dikkat',
+          container: 'border-red-200 bg-red-50 text-red-700',
+          icon: <AlertTriangle className="w-5 h-5 text-red-600" />
+        };
+      default:
+        return {
+          title: 'Bilgi',
+          container: 'border-blue-200 bg-blue-50 text-blue-700',
+          icon: <Info className="w-5 h-5 text-blue-600" />
+        };
+    }
+  };
+
+  const noticeVisual = noticeMessage ? getNoticeVisuals(noticeMessage.type) : null;
+
   return (
     <div className="bg-white rounded-xl shadow-lg border border-gray-200">
       {/* Header */}
@@ -1236,6 +1285,30 @@ ${rawTranscription}`
 
       {/* Content */}
       <div className="p-6">
+        {noticeMessage && noticeVisual && (
+          <div className={`mb-6 flex items-start gap-3 rounded-lg border p-4 ${noticeVisual.container}`}>
+            <div className="mt-0.5 flex-shrink-0">
+              {noticeVisual.icon}
+            </div>
+            <div className="flex-1 text-sm">
+              <p className="font-semibold">{noticeVisual.title}</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-current">
+                {noticeMessage.message}
+              </p>
+            </div>
+            {onDismissNotice && (
+              <button
+                onClick={onDismissNotice}
+                className="flex-shrink-0 text-xs font-semibold text-current opacity-70 hover:opacity-100"
+                type="button"
+              >
+                <span className="sr-only">Uyarıyı kapat</span>
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Modern Audio Player - Better Positioned */}
         {recordedAudio && !isRecording && (
           <div className="mb-6 p-4 bg-gradient-to-r from-slate-50 to-gray-50 rounded-xl border border-gray-200">

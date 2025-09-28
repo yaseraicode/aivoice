@@ -99,6 +99,7 @@ function App() {
   const [hasDirectoryAccess, setHasDirectoryAccess] = useState(false);
   const [storageMessage, setStorageMessage] = useState<StorageMessage | null>(null);
   const [lastSavedFileName, setLastSavedFileName] = useState<string | null>(null);
+  const [transcriptionNotice, setTranscriptionNotice] = useState<StorageMessage | null>(null);
 
   useEffect(() => {
     currentRecordingIdRef.current = currentRecordingId;
@@ -247,6 +248,10 @@ function App() {
     setStorageMessage(null);
   };
 
+  const handleDismissTranscriptionNotice = () => {
+    setTranscriptionNotice(null);
+  };
+
   const ensureDirectoryPermission = async (handle: FileSystemDirectoryHandle): Promise<boolean> => {
     try {
       if (!handle.queryPermission && !handle.requestPermission) {
@@ -303,6 +308,7 @@ function App() {
         type: 'success',
         message: `Yeni kayıtlar "${directoryHandle.name}" klasörüne kaydedilecek.`
       });
+      setTranscriptionNotice(null);
     } catch (error) {
       if ((error as DOMException)?.name === 'AbortError') {
         return;
@@ -327,6 +333,7 @@ function App() {
       type: 'info',
       message: 'Kayıtlar tekrar tarayıcı depolamasına kaydedilecek.'
     });
+    setTranscriptionNotice(null);
   };
 
   const writeRecordingToDirectory = async (
@@ -583,6 +590,8 @@ function App() {
 
     console.log('Kayıt yükleniyor:', rec);
 
+    setTranscriptionNotice(null);
+
     // Aktif kayıt ID'sini ayarla
     setCurrentRecordingId(rec.id || null);
 
@@ -616,10 +625,15 @@ function App() {
             setHasDirectoryAccess(true);
             setLastSavedFileName(rec.fileName);
             console.log('Klasörden ses dosyası okundu:', rec.fileName, file.size, 'bytes');
+            setTranscriptionNotice(null);
           } catch (fileError) {
             console.warn('Klasörden ses dosyası okunamadı:', fileError);
             setHasDirectoryAccess(false);
             setStorageMessage({
+              type: 'error',
+              message: `"${rec.fileName}" dosyasına erişilemedi. Lütfen klasör izinlerini kontrol edin veya kaydı yeniden alın.`
+            });
+            setTranscriptionNotice({
               type: 'error',
               message: `"${rec.fileName}" dosyasına erişilemedi. Lütfen klasör izinlerini kontrol edin veya kaydı yeniden alın.`
             });
@@ -630,10 +644,18 @@ function App() {
             type: 'error',
             message: 'Kayıt dosyasını okumak için klasör izni verilmedi. Ayarlar bölümünden klasör erişimini yeniden onaylayın.'
           });
+          setTranscriptionNotice({
+            type: 'error',
+            message: 'Kayıt dosyasını okumak için klasör izni verilmedi. Ayarlar bölümünden klasör erişimini yeniden onaylayın.'
+          });
         }
       } else {
         setHasDirectoryAccess(false);
         setStorageMessage({
+          type: 'info',
+          message: 'Bu kaydı açmak için daha önce seçtiğiniz klasörü yeniden seçmeniz gerekiyor.'
+        });
+        setTranscriptionNotice({
           type: 'info',
           message: 'Bu kaydı açmak için daha önce seçtiğiniz klasörü yeniden seçmeniz gerekiyor.'
         });
@@ -849,6 +871,8 @@ function App() {
                     void saveCurrentRecording();
                   }}
                   onUpdateRecording={handleUpdateRecording}
+                  noticeMessage={transcriptionNotice}
+                  onDismissNotice={handleDismissTranscriptionNotice}
                 />
               )}
 
