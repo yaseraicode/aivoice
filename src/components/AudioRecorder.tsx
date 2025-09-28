@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Square, Volume2, Users } from 'lucide-react';
+import { Mic, MicOff, Square, Volume2, Users, FolderPlus, ShieldCheck } from 'lucide-react';
 
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob, finalTranscription: string, durationSeconds: number) => void;
@@ -13,6 +13,11 @@ interface AudioRecorderProps {
   setRealtimeText: (text: string) => void;
   geminiTranscription: string;
   setGeminiTranscription: (text: string) => void;
+  recordingStorageMode: 'browser' | 'directory';
+  recordingDirectoryName: string | null;
+  onSelectStorageDirectory: () => void;
+  isSelectingStorageDirectory: boolean;
+  hasDirectoryAccess: boolean;
 }
 
 type AudioSource = 'microphone' | 'system' | 'both';
@@ -28,7 +33,12 @@ export default function AudioRecorder({
   realtimeText,
   setRealtimeText,
   geminiTranscription,
-  setGeminiTranscription
+  setGeminiTranscription,
+  recordingStorageMode,
+  recordingDirectoryName,
+  onSelectStorageDirectory,
+  isSelectingStorageDirectory,
+  hasDirectoryAccess
 }: AudioRecorderProps) {
   const [audioSource, setAudioSource] = useState<AudioSource>('microphone');
   const [isSupported, setIsSupported] = useState(true);
@@ -697,6 +707,53 @@ export default function AudioRecorder({
             <strong>ÖNEMLİ:</strong> Hem mikrofonunuz hem de sistem sesiniz kaydedilecek. Tüm ekran değil, ses çıkışı olan SEKME seçin ve "Sistem sesini paylaş" kutucuğunu işaretleyin.
           </div>
         )}
+      </div>
+
+      {/* Storage Location Info */}
+      <div className="mt-4 border border-gray-200 bg-gray-50 rounded-lg p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-gray-800">Kayıt Konumu</div>
+            <p className="text-xs text-gray-600 mt-1">
+              {recordingStorageMode === 'directory'
+                ? recordingDirectoryName
+                  ? `Yeni kayıtlar "${recordingDirectoryName}" klasörüne kaydediliyor.`
+                  : 'Yeni kayıtlar seçtiğiniz klasöre kaydedilecek.'
+                : 'Kayıtlar tarayıcının yerel depolamasında saklanıyor.'}
+            </p>
+            {recordingStorageMode === 'directory' && !hasDirectoryAccess && (
+              <p className="text-xs text-red-600 mt-1">
+                Tarayıcı klasör erişimini onaylamadı. Lütfen klasörü tekrar seçin.
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              void onSelectStorageDirectory();
+            }}
+            disabled={isRecording || isSelectingStorageDirectory}
+            className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              isRecording || isSelectingStorageDirectory
+                ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                : 'bg-white text-blue-600 border border-blue-200 hover:bg-blue-50'
+            }`}
+          >
+            <FolderPlus className="w-4 h-4" />
+            {recordingStorageMode === 'directory' ? 'Klasörü Değiştir' : 'Klasör Seç'}
+          </button>
+        </div>
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-[11px] text-blue-800">
+          <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+          <div className="space-y-1">
+            <p className="font-semibold text-blue-900">Yalnızca sizin kontrolünüzde</p>
+            <p>
+              Seçtiğiniz klasör sadece bu cihazda saklanır; uygulama geliştiricileri dahil kimse bu dosyalara erişemez.
+            </p>
+            <p>
+              Tarayıcı güvenlik kuralları nedeniyle sayfayı yenilediğinizde klasör erişimini yeniden onaylamanız gerekebilir.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

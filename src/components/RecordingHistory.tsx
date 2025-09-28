@@ -14,11 +14,14 @@ interface Recording {
   speakerCount: number;
   audioData?: string;
   audioType?: string;
+  fileName?: string | null;
+  storageMode?: 'browser' | 'directory';
+  storageDirectoryName?: string | null;
 }
 
 interface RecordingHistoryProps {
   recordings: Recording[];
-  onLoadRecording: (recording: Recording) => void;
+  onLoadRecording: (recording: Recording) => void | Promise<void>;
   activeRecordingId: string | null;
   onDeleteRecording: (id: string) => void;
   onUpdateRecording: (id: string, updates: Partial<Recording>) => void;
@@ -147,7 +150,7 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({
                   className={`border rounded-lg p-4 transition-colors cursor-pointer ${'border-gray-200 hover:bg-gray-50'}`}
                   onClick={() => {
                     console.log('Kayıt tıklandı:', recording.id);
-                    onLoadRecording(recording);
+                    void onLoadRecording(recording);
                   }}
                 >
                   <div className="flex items-start justify-between mb-3">
@@ -173,7 +176,7 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          onLoadRecording(recording);
+                          void onLoadRecording(recording);
                         }}
                         className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm transition-colors"
                       >

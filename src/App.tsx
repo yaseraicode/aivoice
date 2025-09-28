@@ -7,6 +7,8 @@ import PDFExport from './components/PDFExport';
 import SettingsPage from './components/SettingsPage';
 import { Mic, FileText, History, Download, Settings } from 'lucide-react';
 
+type RecordingStorageMode = 'browser' | 'directory';
+
 type StoredRecording = {
   id: string;
   title: string;
@@ -20,7 +22,52 @@ type StoredRecording = {
   audioData: string | null;
   audioType: string;
   speakerCount: number;
+  fileName?: string | null;
+  storageMode?: RecordingStorageMode;
+  storageDirectoryName?: string | null;
 } & Record<string, unknown>;
+
+type StorageMessage = {
+  type: 'success' | 'error' | 'info';
+  message: string;
+};
+
+const sanitizeFileName = (value: string): string => {
+  const trimmed = value
+    .replace(/[\x00-\x1F<>:"/\\|?*]/g, '')
+    .replace(/\s+/g, '-');
+
+  const safe = trimmed || 'voicescript-recording';
+  return safe.slice(0, 64);
+};
+
+const getFileExtensionFromType = (mimeType: string): string => {
+  if (!mimeType) {
+    return 'webm';
+  }
+
+  if (mimeType.includes('mpeg')) {
+    return 'mp3';
+  }
+  if (mimeType.includes('wav')) {
+    return 'wav';
+  }
+  if (mimeType.includes('ogg')) {
+    return 'ogg';
+  }
+  if (mimeType.includes('mp4') || mimeType.includes('m4a')) {
+    return 'm4a';
+  }
+
+  return 'webm';
+};
+
+const generateRecordingFileName = (recordingId: string, title: string, mimeType: string): string => {
+  const baseTitle = sanitizeFileName(title || 'voicescript');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const extension = getFileExtensionFromType(mimeType);
+  return `${baseTitle}-${recordingId}-${timestamp}.${extension}`;
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState('record');
@@ -40,10 +87,58 @@ function App() {
   const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
   const currentRecordingIdRef = useRef<string | null>(null);
   const isSavingRecordingRef = useRef(false);
+  const [recordingDirectoryHandle, setRecordingDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [recordingStorageMode, setRecordingStorageMode] = useState<RecordingStorageMode>(() => {
+    const stored = localStorage.getItem('voicescript-storage-mode');
+    return stored === 'directory' ? 'directory' : 'browser';
+  });
+  const [recordingDirectoryName, setRecordingDirectoryName] = useState<string | null>(() => {
+    return localStorage.getItem('voicescript-storage-directory-name');
+  });
+  const [isSelectingDirectory, setIsSelectingDirectory] = useState(false);
+  const [hasDirectoryAccess, setHasDirectoryAccess] = useState(false);
+  const [storageMessage, setStorageMessage] = useState<StorageMessage | null>(null);
+  const [lastSavedFileName, setLastSavedFileName] = useState<string | null>(null);
 
   useEffect(() => {
     currentRecordingIdRef.current = currentRecordingId;
   }, [currentRecordingId]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (!recordingDirectoryHandle) {
+      setHasDirectoryAccess(false);
+      return;
+    }
+
+    const verifyPermission = async () => {
+      if (!recordingDirectoryHandle.queryPermission) {
+        if (!isCancelled) {
+          setHasDirectoryAccess(true);
+        }
+        return;
+      }
+
+      try {
+        const status = await recordingDirectoryHandle.queryPermission({ mode: 'readwrite' });
+        if (!isCancelled) {
+          setHasDirectoryAccess(status === 'granted');
+        }
+      } catch (error) {
+        console.warn('Klasör izin durumu sorgulanamadı:', error);
+        if (!isCancelled) {
+          setHasDirectoryAccess(false);
+        }
+      }
+    };
+
+    void verifyPermission();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [recordingDirectoryHandle]);
 
   useEffect(() => {
     if (isRecording) {
@@ -135,6 +230,145 @@ function App() {
     }
   }, [aiImprovement]);
 
+  const updateStoragePreferences = (mode: RecordingStorageMode, directoryName: string | null) => {
+    setRecordingStorageMode(mode);
+    setRecordingDirectoryName(directoryName);
+
+    localStorage.setItem('voicescript-storage-mode', mode);
+
+    if (mode === 'directory' && directoryName) {
+      localStorage.setItem('voicescript-storage-directory-name', directoryName);
+    } else {
+      localStorage.removeItem('voicescript-storage-directory-name');
+    }
+  };
+
+  const handleDismissStorageMessage = () => {
+    setStorageMessage(null);
+  };
+
+  const ensureDirectoryPermission = async (handle: FileSystemDirectoryHandle): Promise<boolean> => {
+    try {
+      if (!handle.queryPermission && !handle.requestPermission) {
+        return true;
+      }
+
+      const queryStatus = handle.queryPermission
+        ? await handle.queryPermission({ mode: 'readwrite' })
+        : 'prompt';
+
+      if (queryStatus === 'granted') {
+        return true;
+      }
+
+      if (handle.requestPermission) {
+        const requestStatus = await handle.requestPermission({ mode: 'readwrite' });
+        return requestStatus === 'granted';
+      }
+
+      return false;
+    } catch (error) {
+      console.warn('Klasör izni doğrulanamadı:', error);
+      return false;
+    }
+  };
+
+  const selectRecordingDirectory = async () => {
+    if (!window.showDirectoryPicker) {
+      setStorageMessage({
+        type: 'error',
+        message: 'Tarayıcınız klasör seçimini desteklemiyor. Lütfen Chrome veya Edge kullanmayı deneyin.'
+      });
+      return;
+    }
+
+    setIsSelectingDirectory(true);
+    try {
+      const directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+
+      const permissionGranted = await ensureDirectoryPermission(directoryHandle);
+
+      if (!permissionGranted) {
+        setStorageMessage({
+          type: 'error',
+          message: 'Klasör erişimi için izin verilmedi. Kayıtlar tarayıcı depolamasında tutulmaya devam edecek.'
+        });
+        return;
+      }
+
+      setRecordingDirectoryHandle(directoryHandle);
+      setHasDirectoryAccess(true);
+      updateStoragePreferences('directory', directoryHandle.name);
+      setStorageMessage({
+        type: 'success',
+        message: `Yeni kayıtlar "${directoryHandle.name}" klasörüne kaydedilecek.`
+      });
+    } catch (error) {
+      if ((error as DOMException)?.name === 'AbortError') {
+        return;
+      }
+
+      console.error('Klasör seçimi sırasında hata:', error);
+      setStorageMessage({
+        type: 'error',
+        message: 'Klasör seçimi başarısız oldu. Lütfen tekrar deneyin.'
+      });
+    } finally {
+      setIsSelectingDirectory(false);
+    }
+  };
+
+  const clearRecordingDirectory = () => {
+    setRecordingDirectoryHandle(null);
+    setHasDirectoryAccess(false);
+    setLastSavedFileName(null);
+    updateStoragePreferences('browser', null);
+    setStorageMessage({
+      type: 'info',
+      message: 'Kayıtlar tekrar tarayıcı depolamasına kaydedilecek.'
+    });
+  };
+
+  const writeRecordingToDirectory = async (
+    fileName: string,
+    audioBlob: Blob,
+    handle: FileSystemDirectoryHandle
+  ): Promise<string | null> => {
+    const permissionGranted = await ensureDirectoryPermission(handle);
+
+    if (!permissionGranted) {
+      setHasDirectoryAccess(false);
+      setStorageMessage({
+        type: 'error',
+        message: 'Seçilen klasöre erişilemiyor. Lütfen izin verin veya farklı bir klasör seçin.'
+      });
+      return null;
+    }
+
+    try {
+      const fileHandle = await handle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(audioBlob);
+      await writable.close();
+
+      setHasDirectoryAccess(true);
+      setLastSavedFileName(fileName);
+      setStorageMessage({
+        type: 'success',
+        message: `Kayıt dosyası "${fileName}" adıyla kaydedildi.`
+      });
+
+      return fileName;
+    } catch (error) {
+      console.error('Dosya yazma sırasında hata:', error);
+      setStorageMessage({
+        type: 'error',
+        message: 'Ses dosyası seçilen klasöre kaydedilemedi. Lütfen tarayıcı izinlerini kontrol edin.'
+      });
+      return null;
+    }
+  };
+
   const saveCurrentRecording = async (audioBlob?: Blob, transcriptText?: string, durationSeconds?: number) => {
     if (isSavingRecordingRef.current) {
       console.log('saveCurrentRecording skipped: previous save still in progress');
@@ -156,79 +390,146 @@ function App() {
     }
 
     try {
-      let audioBase64: string | null = null;
-      if (currentAudio) {
-        try {
-          audioBase64 = await blobToBase64(currentAudio);
-        } catch (error) {
-          console.warn('Ses dosyası base64\'e çevrilemedi:', error);
-        }
-      }
-
       const effectiveDuration = typeof durationSeconds === 'number' && durationSeconds > 0
         ? durationSeconds
         : recordingTime;
 
-      setRecordings((prevRecordings) => {
-        const existingId = currentRecordingIdRef.current;
-        const existingIndex = existingId
-          ? prevRecordings.findIndex((recording) => recording.id === existingId)
-          : -1;
+      const existingId = currentRecordingIdRef.current;
+      const recordingsSnapshot = recordings;
+      const existingIndexSnapshot = existingId
+        ? recordingsSnapshot.findIndex((recording) => recording.id === existingId)
+        : -1;
 
-        const isNewRecording = existingIndex === -1;
-        const recordingId = isNewRecording ? Date.now().toString() : existingId ?? Date.now().toString();
-        const baseRecording: StoredRecording = {
-          id: recordingId,
-          title: `Kayıt - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`,
-          timestamp: new Date().toISOString(),
-          duration: effectiveDuration,
-          rawTranscript: currentTranscript,
-          geminiTranscript: isNewRecording ? '' : geminiTranscription,
-          processedTranscript: isNewRecording ? '' : processedTranscript,
-          aiImprovedTranscript: isNewRecording ? '' : aiImprovedTranscript,
-          quality: 'medium',
-          audioData: audioBase64,
-          audioType: currentAudio?.type || 'audio/webm',
-          speakerCount: 1
-        };
+      const isNewRecording = existingIndexSnapshot === -1;
+      const recordingId = isNewRecording ? Date.now().toString() : existingId ?? Date.now().toString();
+      const defaultTitle = `Kayıt - ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}`;
+      const existingRecording = existingIndexSnapshot >= 0 ? recordingsSnapshot[existingIndexSnapshot] : null;
+      const recordingTitle = existingRecording?.title ?? defaultTitle;
 
-        if (isNewRecording) {
-          console.log('Yeni kayıt ekleniyor:', {
-            id: baseRecording.id,
-            audioData: baseRecording.audioData ? `${baseRecording.audioData.length} karakter` : 'yok',
-            duration: effectiveDuration,
-          });
+      let fileNameForDirectory = existingRecording?.fileName ?? null;
+      let storageModeForRecording: RecordingStorageMode = existingRecording?.storageMode ?? 'browser';
+      let storageDirectoryNameForRecording = existingRecording?.storageDirectoryName ?? null;
+      let audioBase64: string | null = null;
+      let usedDirectoryStorage = false;
+      let resolvedDirectoryName: string | null = null;
 
-          setCurrentRecordingId(baseRecording.id);
-          currentRecordingIdRef.current = baseRecording.id;
-          return persistRecordings([...prevRecordings, baseRecording]);
+      if (currentAudio) {
+        if (recordingDirectoryHandle) {
+          resolvedDirectoryName = recordingDirectoryName ?? recordingDirectoryHandle.name;
+          const candidateName = fileNameForDirectory
+            ?? generateRecordingFileName(recordingId, recordingTitle, currentAudio.type || 'audio/webm');
+
+          const savedFileName = await writeRecordingToDirectory(candidateName, currentAudio, recordingDirectoryHandle);
+
+          if (savedFileName) {
+            usedDirectoryStorage = true;
+            fileNameForDirectory = savedFileName;
+            storageModeForRecording = 'directory';
+            storageDirectoryNameForRecording = resolvedDirectoryName;
+            if (!recordingDirectoryName) {
+              updateStoragePreferences('directory', resolvedDirectoryName);
+            }
+          }
         }
 
+        if (!usedDirectoryStorage) {
+          const previousFileName = fileNameForDirectory;
+          try {
+            audioBase64 = await blobToBase64(currentAudio);
+          } catch (conversionError) {
+            console.warn('Ses dosyası base64\'e çevrilemedi:', conversionError);
+            audioBase64 = existingRecording?.audioData ?? null;
+          }
+
+          if (storageModeForRecording === 'directory') {
+            storageModeForRecording = 'browser';
+            storageDirectoryNameForRecording = null;
+          }
+
+          fileNameForDirectory = null;
+
+          // Yeni kayıt tarayıcı deposunda kalıyorsa son kaydedilen dosya ismini temizle
+          setLastSavedFileName((prev) => (prev && prev === previousFileName ? null : prev));
+        } else {
+          // Klasöre kaydedildiyse tarayıcı depolamasındaki büyük blobu tutmaya gerek yok
+          audioBase64 = null;
+          setLastSavedFileName(fileNameForDirectory);
+        }
+      }
+
+      const baseRecording: StoredRecording = existingRecording
+        ? {
+            ...existingRecording,
+          }
+        : {
+            id: recordingId,
+            title: recordingTitle,
+            timestamp: new Date().toISOString(),
+            duration: effectiveDuration,
+            rawTranscript: currentTranscript,
+            geminiTranscript: '',
+            processedTranscript: '',
+            aiImprovedTranscript: '',
+            quality: 'medium',
+            audioData: null,
+            audioType: currentAudio?.type || 'audio/webm',
+            speakerCount: 1,
+            fileName: null,
+            storageMode: 'browser',
+            storageDirectoryName: null,
+          };
+
+      baseRecording.timestamp = new Date().toISOString();
+      baseRecording.duration = effectiveDuration;
+      baseRecording.rawTranscript = currentTranscript;
+      baseRecording.geminiTranscript = geminiTranscription;
+      baseRecording.processedTranscript = processedTranscript;
+      baseRecording.aiImprovedTranscript = aiImprovedTranscript;
+      baseRecording.fileName = fileNameForDirectory;
+      baseRecording.storageMode = storageModeForRecording;
+      baseRecording.storageDirectoryName = storageDirectoryNameForRecording;
+
+      if (currentAudio) {
+        baseRecording.audioType = currentAudio.type || baseRecording.audioType || 'audio/webm';
+
+        if (usedDirectoryStorage) {
+          baseRecording.audioData = null;
+        } else if (audioBase64) {
+          baseRecording.audioData = audioBase64;
+        } else if (!isNewRecording) {
+          baseRecording.audioData = existingRecording?.audioData ?? null;
+        }
+      } else if (existingRecording) {
+        baseRecording.audioData = existingRecording.audioData;
+        baseRecording.audioType = existingRecording.audioType;
+      }
+
+      if (isNewRecording) {
+        console.log('Yeni kayıt ekleniyor:', {
+          id: baseRecording.id,
+          storageMode: baseRecording.storageMode,
+          duration: effectiveDuration,
+        });
+
+        setCurrentRecordingId(baseRecording.id);
+        currentRecordingIdRef.current = baseRecording.id;
+
+        setRecordings((prevRecordings) => persistRecordings([...prevRecordings, baseRecording]));
+      } else {
         console.log('Mevcut kayıt güncelleniyor:', {
           id: baseRecording.id,
-          audioLength: effectiveDuration,
+          storageMode: baseRecording.storageMode,
           transcriptLength: baseRecording.rawTranscript.length,
         });
 
-        const updatedRecordings = prevRecordings.map((recording, index) => {
-          if (index !== existingIndex) {
-            return recording;
-          }
+        setRecordings((prevRecordings) => {
+          const updatedRecordings = prevRecordings.map((recording) => (
+            recording.id === baseRecording.id ? baseRecording : recording
+          ));
 
-          return {
-            ...recording,
-            duration: effectiveDuration,
-            rawTranscript: currentTranscript,
-            geminiTranscript: geminiTranscription,
-            processedTranscript: processedTranscript,
-            aiImprovedTranscript: aiImprovedTranscript,
-            audioData: audioBase64,
-            audioType: currentAudio?.type || recording.audioType,
-          };
+          return persistRecordings(updatedRecordings);
         });
-
-        return persistRecordings(updatedRecordings);
-      });
+      }
 
       if (effectiveDuration > 0) {
         setRecordingTime(effectiveDuration);
@@ -265,7 +566,7 @@ function App() {
   };
 
 
-  const handleLoadRecording = (recording: unknown) => {
+  const handleLoadRecording = async (recording: unknown) => {
     const rec = recording as {
       id?: string;
       rawTranscript?: string;
@@ -275,6 +576,9 @@ function App() {
       audioData?: string;
       audioType?: string;
       timestamp?: string;
+      fileName?: string | null;
+      storageMode?: RecordingStorageMode;
+      storageDirectoryName?: string | null;
     };
 
     console.log('Kayıt yükleniyor:', rec);
@@ -298,18 +602,59 @@ function App() {
     setAiImprovedTranscript(rec.aiImprovedTranscript || '');
 
     // Load audio data if available
-    if (rec.audioData && rec.audioType) {
+    let loadedAudio: Blob | null = null;
+
+    if (rec.storageMode === 'directory' && rec.fileName) {
+      if (recordingDirectoryHandle) {
+        const permissionGranted = await ensureDirectoryPermission(recordingDirectoryHandle);
+
+        if (permissionGranted) {
+          try {
+            const fileHandle = await recordingDirectoryHandle.getFileHandle(rec.fileName);
+            const file = await fileHandle.getFile();
+            loadedAudio = file;
+            setHasDirectoryAccess(true);
+            setLastSavedFileName(rec.fileName);
+            console.log('Klasörden ses dosyası okundu:', rec.fileName, file.size, 'bytes');
+          } catch (fileError) {
+            console.warn('Klasörden ses dosyası okunamadı:', fileError);
+            setHasDirectoryAccess(false);
+            setStorageMessage({
+              type: 'error',
+              message: `"${rec.fileName}" dosyasına erişilemedi. Lütfen klasör izinlerini kontrol edin veya kaydı yeniden alın.`
+            });
+          }
+        } else {
+          setHasDirectoryAccess(false);
+          setStorageMessage({
+            type: 'error',
+            message: 'Kayıt dosyasını okumak için klasör izni verilmedi. Ayarlar bölümünden klasör erişimini yeniden onaylayın.'
+          });
+        }
+      } else {
+        setHasDirectoryAccess(false);
+        setStorageMessage({
+          type: 'info',
+          message: 'Bu kaydı açmak için daha önce seçtiğiniz klasörü yeniden seçmeniz gerekiyor.'
+        });
+      }
+    }
+
+    if (!loadedAudio && rec.audioData && rec.audioType) {
       try {
         const audioBlob = base64ToBlob(rec.audioData, rec.audioType);
-        setRecordedAudio(audioBlob);
-        console.log('Ses dosyası yüklendi:', audioBlob.size, 'bytes');
+        loadedAudio = audioBlob;
+        console.log('Base64 ses dosyası yüklendi:', audioBlob.size, 'bytes');
       } catch (error) {
-        console.warn('Ses dosyası yüklenemedi:', error);
-        setRecordedAudio(null);
+        console.warn('Base64 ses dosyası yüklenemedi:', error);
       }
-    } else {
-      setRecordedAudio(null);
     }
+
+    if (!loadedAudio) {
+      console.log('Ses dosyası yüklenemedi, recordedAudio null olarak ayarlanıyor.');
+    }
+
+    setRecordedAudio(loadedAudio);
 
     // Load AI improvement if available
     if (rec.aiImprovedTranscript) {
@@ -480,6 +825,11 @@ function App() {
                   setRealtimeText={setRealtimeText}
                   geminiTranscription={geminiTranscription}
                   setGeminiTranscription={setGeminiTranscription}
+                  recordingStorageMode={recordingStorageMode}
+                  recordingDirectoryName={recordingDirectoryName}
+                  onSelectStorageDirectory={selectRecordingDirectory}
+                  isSelectingStorageDirectory={isSelectingDirectory}
+                  hasDirectoryAccess={hasDirectoryAccess}
                 />
               )}
 
@@ -525,7 +875,17 @@ function App() {
               )}
 
               {activeTab === 'settings' && (
-                <SettingsPage />
+                <SettingsPage
+                  recordingStorageMode={recordingStorageMode}
+                  recordingDirectoryName={recordingDirectoryName}
+                  onSelectRecordingDirectory={selectRecordingDirectory}
+                  onClearRecordingDirectory={clearRecordingDirectory}
+                  isSelectingDirectory={isSelectingDirectory}
+                  hasDirectoryAccess={hasDirectoryAccess}
+                  lastSavedFileName={lastSavedFileName}
+                  storageMessage={storageMessage}
+                  onDismissStorageMessage={handleDismissStorageMessage}
+                />
               )}
             </main>
           </div>

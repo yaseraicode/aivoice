@@ -1,8 +1,54 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Trash2, Edit3, Check, X, Key, Eye, EyeOff, TestTube, AlertTriangle, Info, Save, RefreshCw } from 'lucide-react';
+import {
+  Settings,
+  Plus,
+  Trash2,
+  Edit3,
+  Check,
+  X,
+  Key,
+  Eye,
+  EyeOff,
+  TestTube,
+  AlertTriangle,
+  Info,
+  Save,
+  RefreshCw,
+  FolderOpen,
+  FolderX,
+  HardDrive,
+  ShieldCheck
+} from 'lucide-react';
 import { GeminiKeyManager, GeminiKey, DEFAULT_GEMINI_MODEL } from '../services/GeminiKeyManager';
 
-const SettingsPage: React.FC = () => {
+type StorageMessage = {
+  type: 'success' | 'error' | 'info';
+  message: string;
+} | null;
+
+interface SettingsPageProps {
+  recordingStorageMode: 'browser' | 'directory';
+  recordingDirectoryName: string | null;
+  onSelectRecordingDirectory: () => Promise<void> | void;
+  onClearRecordingDirectory: () => void;
+  isSelectingDirectory: boolean;
+  hasDirectoryAccess: boolean;
+  lastSavedFileName: string | null;
+  storageMessage: StorageMessage;
+  onDismissStorageMessage: () => void;
+}
+
+const SettingsPage: React.FC<SettingsPageProps> = ({
+  recordingStorageMode,
+  recordingDirectoryName,
+  onSelectRecordingDirectory,
+  onClearRecordingDirectory,
+  isSelectingDirectory,
+  hasDirectoryAccess,
+  lastSavedFileName,
+  storageMessage,
+  onDismissStorageMessage
+}) => {
   const [keys, setKeys] = useState<GeminiKey[]>([]);
   const [isAddingKey, setIsAddingKey] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -187,50 +233,178 @@ const SettingsPage: React.FC = () => {
 
   const stats = getKeyStats();
 
-  return (
-    <div className="bg-white rounded-xl shadow-lg border border-gray-200">
-      {/* Header */}
-      <div className="flex items-center justify-between p-6 border-b border-gray-200">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          <Settings className="w-6 h-6 text-blue-600" />
-          Yapay Zeka API Anahtar Yönetimi
-        </h2>
+  const storageStatus = (() => {
+    if (recordingStorageMode === 'directory') {
+      if (!hasDirectoryAccess || !recordingDirectoryName) {
+        return {
+          label: 'Klasör depolama bekleniyor',
+          classes: 'border-amber-200 bg-amber-50 text-amber-700'
+        };
+      }
 
-        <div className="flex items-center gap-4 text-sm text-gray-600">
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span>Aktif: {stats.active}</span>
+      return {
+        label: `"${recordingDirectoryName}" bağlı`,
+        classes: 'border-blue-200 bg-blue-50 text-blue-700'
+      };
+    }
+
+    return {
+      label: 'Tarayıcı depolaması',
+      classes: 'border-gray-200 bg-gray-50 text-gray-700'
+    };
+  })();
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl shadow-lg border border-gray-200">
+        <div className="flex flex-col gap-3 p-6 border-b border-gray-200 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <HardDrive className="w-6 h-6 text-blue-600" />
+            Kayıt Depolama Yönetimi
+          </h2>
+          <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border ${storageStatus.classes}`}>
+            <span className="inline-flex h-2 w-2 rounded-full bg-current"></span>
+            {storageStatus.label}
+          </span>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {storageMessage && (
+            <div
+              className={`rounded-lg border p-4 flex items-start gap-3 ${
+                storageMessage.type === 'success'
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : storageMessage.type === 'error'
+                  ? 'border-red-200 bg-red-50 text-red-700'
+                  : 'border-blue-200 bg-blue-50 text-blue-700'
+              }`}
+            >
+              <HardDrive className="w-5 h-5 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold">Depolama Bilgisi</p>
+                <p className="text-xs mt-1 whitespace-pre-wrap">{storageMessage.message}</p>
+              </div>
+              <button onClick={onDismissStorageMessage} className="text-xs font-semibold opacity-70 hover:opacity-100">
+                Kapat
+              </button>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-blue-600" />
+                <h3 className="text-lg font-semibold text-gray-800">Aktif Depolama</h3>
+              </div>
+              <p className="text-sm text-gray-600 mt-2">
+                Ses kayıtları varsayılan olarak tarayıcı depolamasında tutulur. Daha uzun oturumlar için dilediğiniz klasörü seçebilirsiniz.
+              </p>
+              <div className="mt-3 text-sm text-gray-700">
+                <span className="font-semibold">Konum:</span>{' '}
+                {recordingStorageMode === 'directory' ? (
+                  recordingDirectoryName ? (
+                    <span>
+                      "{recordingDirectoryName}" klasörü
+                    </span>
+                  ) : (
+                    <span>Klasör seçimi bekleniyor</span>
+                  )
+                ) : (
+                  <span>Tarayıcı depolaması</span>
+                )}
+              </div>
+              {recordingStorageMode === 'directory' && !hasDirectoryAccess && (
+                <p className="text-xs text-red-600 mt-2">
+                  Tarayıcı klasörü okuyamıyor. Lütfen erişimi tekrar onaylayın veya farklı bir klasör seçin.
+                </p>
+              )}
+              {lastSavedFileName && (
+                <p className="text-xs text-gray-500 mt-2">
+                  Son kaydedilen dosya: <span className="font-mono">{lastSavedFileName}</span>
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col gap-2 md:w-60">
+              <button
+                onClick={() => { void onSelectRecordingDirectory(); }}
+                disabled={isSelectingDirectory}
+                className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  isSelectingDirectory
+                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                <FolderOpen className="w-4 h-4" />
+                {recordingStorageMode === 'directory' ? 'Farklı klasör seç' : 'Klasör seç'}
+              </button>
+              {recordingStorageMode === 'directory' && (
+                <button
+                  onClick={onClearRecordingDirectory}
+                  disabled={isSelectingDirectory}
+                  className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    isSelectingDirectory
+                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  <FolderX className="w-4 h-4" />
+                  Tarayıcı deposunu kullan
+                </button>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-            <span>Pasif: {stats.total - stats.active}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
-            <span>Hatalı: {stats.failed}</span>
+
+          <div className="flex items-start gap-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-[11px] text-blue-800">
+            <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+            <div className="space-y-1">
+              <p className="font-semibold text-blue-900">Yalnızca sizin kontrolünüzde</p>
+              <p>Seçtiğiniz klasör sadece bu cihazda saklanır; uygulama geliştiricileri dahil kimse dosyalarınıza ulaşamaz.</p>
+              <p>Tarayıcı güvenlik kuralları nedeniyle sayfayı yenilediğinizde klasör erişimini yeniden onaylamanız gerekebilir.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="p-6">
-        {/* Info Alert */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-blue-600 mt-0.5" />
-            <div>
-              <h3 className="text-sm font-semibold text-blue-800 mb-1">Bilgi</h3>
-              <p className="text-sm text-blue-700">
-                API anahtarlarınız yerel depolamada şifrelenmiş olarak saklanır.
-                Anahtarlar round-robin mantığıyla otomatik olarak döndürülür.
-                Hatalı anahtarlar otomatik olarak devre dışı bırakılır.
-              </p>
+      <div className="bg-white rounded-xl shadow-lg border border-gray-200">
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <Settings className="w-6 h-6 text-blue-600" />
+            Yapay Zeka API Anahtar Yönetimi
+          </h2>
+
+          <div className="flex items-center gap-4 text-sm text-gray-600">
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+              <span>Aktif: {stats.active}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+              <span>Pasif: {stats.total - stats.active}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+              <span>Hatalı: {stats.failed}</span>
             </div>
           </div>
         </div>
 
-        {/* Gemini Model Configuration */}
-        <div className="mb-6 bg-gradient-to-r from-blue-50 to-white border border-blue-200 rounded-lg p-4">
+        <div className="p-6">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-blue-600 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-blue-800 mb-1">Bilgi</h3>
+                <p className="text-sm text-blue-700">
+                  API anahtarlarınız yerel depolamada şifrelenmiş olarak saklanır.
+                  Anahtarlar round-robin mantığıyla otomatik olarak döndürülür.
+                  Hatalı anahtarlar otomatik olarak devre dışı bırakılır.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Gemini Model Configuration */}
+          <div className="mb-6 bg-gradient-to-r from-blue-50 to-white border border-blue-200 rounded-lg p-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="space-y-2">
               <h3 className="text-lg font-semibold text-gray-800">Gemini Model Ayarı</h3>
@@ -578,6 +752,7 @@ const SettingsPage: React.FC = () => {
         </div>
       </div>
     </div>
+  </div>
   );
 };
 
